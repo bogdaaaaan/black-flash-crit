@@ -181,8 +181,12 @@ namespace BlackFlashCrit
         static void Postfix(ref bool __result)
         {
             if (!BlackFlashCrit.ModEnabled.Value) return;
-            if (!BlackFlashCrit.EveryCrestCanCrit.Value) return;
-            __result = true;
+            if (!BlackFlashCrit.EveryCrestCanCrit.Value)
+            {
+                if (!Gameplay.WandererCrest.IsEquipped) return;
+            }
+
+            __result = true; 
         }
     }
 }
