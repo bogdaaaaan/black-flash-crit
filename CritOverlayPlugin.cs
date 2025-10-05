@@ -10,33 +10,46 @@ using UnityEngine;
 namespace BlackFlashCrit
 {
     [BepInPlugin(PluginGuid, PluginName, PluginVersion)]
-    public class CritOverlayPlugin : BaseUnityPlugin
+    public class BlackFlashCrit : BaseUnityPlugin
     {
-        public const string PluginGuid = "bodyando.silksong.critoverlay";
-        public const string PluginName = "Critical Strike Overlay";
+        public const string PluginGuid = "bodyando.silksong.blackflash";
+        public const string PluginName = "Black Flash Mod";
         public const string PluginVersion = "1.0.0";
 
         internal static ManualLogSource Log;
         internal static Harmony HarmonyInstance;
 
-        private const string SpriteFileName = "crit_overlay.png";
-        internal static Sprite CritSprite;
-        internal static string AssetPath;
+        // Sprites
+        internal static Sprite CritSprite1;
+        internal static Sprite CritSprite2;
+        internal static Sprite CritSprite3;
+        private const string OverlayImageFile = "black_flash";
 
         // Config
         internal static ConfigEntry<bool> ModEnabled;
         internal static ConfigEntry<bool> EveryCrestCanCrit;
         internal static ConfigEntry<float> CustomCritChance;
         internal static ConfigEntry<float> CritDamageMultiplier;
+        
+        // Debounce state for CustomCritChance logging
+        private const float CritChanceLogDebounceSeconds = 0.15f;
+        private bool _critChanceDirty;
+        private float _critChanceLastChangeRealtime;
+        private float _pendingCritChanceValue;
+
+        // Debounce state for CritDamageMultiplier logging
+        private const float CritDamageMultiplierLogDebounceSeconds = 0.15f;
+        private bool _critDamageMultiplierDirty;
+        private float _critDamageMultiplierLastChangeRealtime;
+        private float _pendingCritDamageMultiplierValue;
 
         private void Awake()
         {
             Log = Logger;
             HarmonyInstance = new Harmony(PluginGuid);
-            AssetPath = Path.Combine(Application.dataPath, "Mods", "Playground", SpriteFileName);
-
+           
             InitConfig();
-            TryLoadOrCreateSprite();
+            TryLoadSprites();
             TryPatch();
             Log.LogInfo($"{PluginName} loaded.");
         }
@@ -44,50 +57,106 @@ namespace BlackFlashCrit
         private void InitConfig()
         {
             ModEnabled = Config.Bind("General", "EnableMod", true, "Enable or disable mod");
-            ModEnabled.SettingChanged += (sender, args) => Log.LogInfo($"Texture Parser Mod is now {(ModEnabled.Value ? "ON" : "OFF")}");
+            ModEnabled.SettingChanged += (sender, args) => Log.LogInfo($"{PluginName} is now {(ModEnabled.Value ? "ON" : "OFF")}");
 
-            EveryCrestCanCrit = Config.Bind("Crit", "EveryCrestCanCrit", false, "If true, all crests can trigger critical hits. If false, only the Wanderer crit crest can.");
+            EveryCrestCanCrit = Config.Bind("General", "EveryCrestCanCrit", false, "If true, all crests can trigger critical hits. If false, only the Wanderer crit crest can.");
             EveryCrestCanCrit.SettingChanged += (sender, args) => Log.LogInfo($"EveryCrestCanCrit is now {(EveryCrestCanCrit.Value ? "ON" : "OFF")}");
 
-            CustomCritChance = Config.Bind("Crit", "CustomCritChance", 0.02f, new ConfigDescription("Custom critical chance (0.0 - 1.0).", new AcceptableValueRange<float>(0f, 1f)));
-            CustomCritChance.SettingChanged += (sender, args) => Log.LogInfo($"CustomCritChance is now {CustomCritChance.Value}");
-            
-            CritDamageMultiplier = Config.Bind("Crit", "CritDamageMultiplier", 2.5f,
+            CustomCritChance = Config.Bind("Crit", "CustomCritChance", 0.15f,
+                new ConfigDescription("Custom critical chance (0.0 - 1.0).", new AcceptableValueRange<float>(0f, 1f)));
+            // Debounce logging
+            CustomCritChance.SettingChanged += (sender, args) =>
+            {
+                _pendingCritChanceValue = CustomCritChance.Value;
+                _critChanceDirty = true;
+                _critChanceLastChangeRealtime = Time.realtimeSinceStartup;
+            };
+
+            CritDamageMultiplier = Config.Bind("Crit", "CritDamageMultiplier", 3f,
                     new ConfigDescription("Critical hit damage multiplier applied by the game.", new AcceptableValueRange<float>(0f, 10f)));
-            CritDamageMultiplier.SettingChanged += (sender, args) => Log.LogInfo($"CritDamageMultiplier is now {CritDamageMultiplier.Value}");
+
+            CritDamageMultiplier.SettingChanged += (sender, args) =>
+            {
+                _pendingCritDamageMultiplierValue = CritDamageMultiplier.Value;
+                _critDamageMultiplierDirty = true;
+                _critDamageMultiplierLastChangeRealtime = Time.realtimeSinceStartup;
+            };
         }
 
-        private void TryLoadOrCreateSprite()
+        private void Update()
+        {
+            // Debounce (logs once after slider stops moving for CritChanceLogDebounceSeconds)
+            if (_critChanceDirty && Time.realtimeSinceStartup - _critChanceLastChangeRealtime >= CritChanceLogDebounceSeconds)
+            {
+                Log.LogInfo($"CustomCritChance is now {_pendingCritChanceValue}");
+                _critChanceDirty = false;
+            }
+            if (_critDamageMultiplierDirty && Time.realtimeSinceStartup - _critDamageMultiplierLastChangeRealtime >= CritDamageMultiplierLogDebounceSeconds)
+            {
+                Log.LogInfo($"CritDamageMultiplier is now {_pendingCritDamageMultiplierValue}");
+                _critDamageMultiplierDirty = false;
+            }
+        }
+
+        private void TryLoadSprites()
         {
             try
             {
-                if (!File.Exists(AssetPath))
-                {
-                    Log.LogWarning($"{SpriteFileName} not found. Creating placeholder (red square).");
-                    var tex = new Texture2D(32, 32, TextureFormat.RGBA32, false);
-                    var fill = new Color32(255, 0, 0, 180);
-                    var pixels = new Color32[32 * 32];
-                    for (int i = 0; i < pixels.Length; i++) pixels[i] = fill;
-                    tex.SetPixels32(pixels);
-                    tex.Apply();
-                    CritSprite = Sprite.Create(tex, new Rect(0, 0, 32, 32), new Vector2(0.5f, 0.5f), 32f);
-                    return;
-                }
+                string pluginDir = Path.GetDirectoryName(Info.Location);
 
-                byte[] data = File.ReadAllBytes(AssetPath);
-                var tex2 = new Texture2D(2, 2, TextureFormat.RGBA32, false);
-                if (!tex2.LoadImage(data))
+                CritSprite1 = LoadSpriteOrWarn(Path.Combine(pluginDir, OverlayImageFile + "_1.png"), "Image1");
+                CritSprite2 = LoadSpriteOrWarn(Path.Combine(pluginDir, OverlayImageFile + "_2.png"), "Image2");
+                CritSprite3 = LoadSpriteOrWarn(Path.Combine(pluginDir, OverlayImageFile + "_3.png"), "Image3");
+
+                // If none loaded, make a placeholder so we still show something
+                if (CritSprite1 == null && CritSprite2 == null && CritSprite3 == null)
                 {
-                    Log.LogError($"Failed to load {SpriteFileName} image data.");
-                    return;
+                    Log.LogWarning("No overlay images loaded. Creating placeholder.");
+                    CritSprite1 = MakePlaceholder(32, 32, new Color32(255, 0, 0, 180));
                 }
-                CritSprite = Sprite.Create(tex2, new Rect(0, 0, tex2.width, tex2.height), new Vector2(0.5f, 0.5f), 64f);
-                Log.LogInfo($"Loaded crit overlay sprite {tex2.width}x{tex2.height}.");
             }
             catch (Exception e)
             {
-                Log.LogError($"Error loading overlay sprite: {e}");
+                Log.LogError($"Error loading overlay sprites: {e}");
+                if (CritSprite1 == null && CritSprite2 == null && CritSprite3 == null)
+                    CritSprite1 = MakePlaceholder(32, 32, new Color32(255, 0, 0, 180));
             }
+        }
+
+        private Sprite LoadSpriteOrWarn(string path, string label)
+        {
+            if (!File.Exists(path))
+            {
+                Log.LogWarning($"{label}: file not found at {path}");
+                return null;
+            }
+
+            try
+            {
+                byte[] data = File.ReadAllBytes(path);
+                var tex = new Texture2D(2, 2, TextureFormat.RGBA32, false);
+                if (!tex.LoadImage(data))
+                {
+                    Log.LogError($"{label}: failed to decode image at {path}");
+                    return null;
+                }
+                Log.LogInfo($"{label}: loaded {Path.GetFileName(path)} ({tex.width}x{tex.height})");
+                return Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f), 64f);
+            }
+            catch (Exception e)
+            {
+                Log.LogError($"{label}: error loading image at {path}: {e.Message}");
+                return null;
+            }
+        }
+        private Sprite MakePlaceholder(int w, int h, Color32 c)
+        {
+            var tex = new Texture2D(w, h, TextureFormat.RGBA32, false);
+            var pixels = new Color32[w * h];
+            for (int i = 0; i < pixels.Length; i++) pixels[i] = c;
+            tex.SetPixels32(pixels);
+            tex.Apply();
+            return Sprite.Create(tex, new Rect(0, 0, w, h), new Vector2(0.5f, 0.5f), w);
         }
 
         private void TryPatch()
@@ -104,18 +173,10 @@ namespace BlackFlashCrit
 
         internal static void SpawnCritOverlay(Transform target)
         {
-            if (!ModEnabled.Value) return;
-            if (CritSprite == null || target == null) return;
+            if (!ModEnabled.Value || target == null) return;
 
-            var go = new GameObject("CritOverlaySprite");
-            go.transform.position = target.position + new Vector3(0f, 0.5f, 0f);
-            var sr = go.AddComponent<SpriteRenderer>();
-            sr.sprite = CritSprite;
-            sr.sortingLayerName = "Effects";  
-            sr.sortingOrder = 999;
-            sr.color = Color.white;
-
-            go.AddComponent<CritFade>().Init(0.4f);
+            var sprites = new Sprite[] { CritSprite1, CritSprite2, CritSprite3 };
+            CritOverlayBurst.PlayBurst(target, sprites);
         }
     }
 }

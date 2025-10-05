@@ -6,12 +6,14 @@ namespace BlackFlashCrit
     {
         private float life;
         private float maxLife;
+        private float baseAlpha = 1f;
         private SpriteRenderer sr;
 
-        public void Init(float duration)
+        public void Init(float duration, float initialAlpha = 1f)
         {
             maxLife = duration;
             life = duration;
+            baseAlpha = Mathf.Clamp01(initialAlpha);
             sr = GetComponent<SpriteRenderer>();
         }
 
@@ -27,7 +29,7 @@ namespace BlackFlashCrit
             {
                 float t = life / maxLife;
                 var c = sr.color;
-                c.a = t;
+                c.a = baseAlpha * t;
                 sr.color = c;
             }
         }
