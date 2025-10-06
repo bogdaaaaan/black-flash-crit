@@ -69,7 +69,7 @@ namespace BlackFlashCrit
             float rotMax = 18f;
             float scaleMin = 0.90f;
             float scaleMax = 1.10f;
-            float scale = Random.Range(scaleMin, scaleMax);
+            float scale = Random.Range(scaleMin, scaleMax) * BlackFlashCrit.CritOverlayScale.Value;
 
             Vector2 jitter2D = posRadius > 0f ? Random.insideUnitCircle * posRadius : Vector2.zero;
             float rotZ = (rotMax > 0f) ? Random.Range(-rotMax, rotMax) : 0f;
@@ -81,14 +81,38 @@ namespace BlackFlashCrit
 
             var sr = go.AddComponent<SpriteRenderer>();
             sr.sprite = sprite;
-            sr.sortingLayerName = "Effects";
-            sr.sortingOrder = 999;
+
+            // Safer sorting: try Effects layer, else fallback with high order
+            if (!TryAssignSortingLayer(sr, "Effects"))
+            {
+                sr.sortingOrder = 5000;
+            }
+            else
+            {
+                sr.sortingOrder = 999;
+            }
+
             // Initial alpha per step: 1.0, 0.5, 0.25
             float initialAlpha = Mathf.Pow(0.5f, stepIndex);
             sr.color = new Color(1f, 1f, 1f, initialAlpha);
 
             float fade = 0.4f;
             go.AddComponent<CritFade>().Init(fade, initialAlpha);
+        }
+
+        private static bool TryAssignSortingLayer(SpriteRenderer sr, string layerName)
+        {
+            if (sr == null) return false;
+            var layers = SortingLayer.layers;
+            for (int i = 0; i < layers.Length; i++)
+            {
+                if (layers[i].name == layerName)
+                {
+                    sr.sortingLayerName = layerName;
+                    return true;
+                }
+            }
+            return false;
         }
     }
 }
