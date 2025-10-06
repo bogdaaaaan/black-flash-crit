@@ -34,12 +34,10 @@ namespace BlackFlashCrit
             var go = c.gameObject;
             if (go.CompareTag("Player")) return;
 
-            if (BlackFlashCrit.DisplayCritOverlay.Value)
-                BlackFlashCrit.SpawnCritOverlay(go.transform);
+            BlackFlashCrit.SpawnCritOverlay(go.transform);
         }
     }
 
-    // Return custom crit chance 
     [HarmonyPatch(typeof(Gameplay), "get_WandererCritChance")]
     internal static class Gameplay_WandererCritChance_Patch
     {
@@ -50,7 +48,6 @@ namespace BlackFlashCrit
         }
     }
 
-    // Return custom crit damage multiplier 
     [HarmonyPatch(typeof(Gameplay), "get_WandererCritMultiplier")]
     internal static class Gameplay_WandererCritMultiplier_Patch
     {
@@ -61,7 +58,6 @@ namespace BlackFlashCrit
         }
     }
 
-    // Apply crit values ASAP on hero awake (fixes first-hit ignoring on load)
     [HarmonyPatch]
     internal static class HeroController_Awake_ApplyCritValues_Patch
     {
@@ -91,33 +87,31 @@ namespace BlackFlashCrit
 
             try { _chanceFI?.SetValue(null, Mathf.Clamp01(BlackFlashCrit.CustomCritChance.Value)); } catch { }
             try { _multFI?.SetValue(null, Mathf.Max(0f, BlackFlashCrit.CritDamageMultiplier.Value)); } catch { }
+
+            // Prime the vanilla gates cache immediately on hero load
+            VanillaGateCache.UpdateGates();
         }
     }
 
-    // Ensure the game ALWAYS uses values and that crits aren’t locked (covers binds/heals)
     [HarmonyPatch]
     internal static class HeroController_Update_ApplyCritValues_Patch
     {
         private static FieldInfo _wandererCritChanceFI;
         private static FieldInfo _wandererCritMultiplierFI;
-
-        private static PropertyInfo _wandererStatePI;
-        private static FieldInfo _lockedField;
-        private static PropertyInfo _lockedProp;
-
         private static bool _searchedValues;
-        private static bool _searchedState;
 
         static MethodBase TargetMethod()
         {
             return AccessTools.Method(AccessTools.TypeByName("HeroController"), "Update");
         }
 
-        static void Postfix(object __instance)
+        static void Postfix()
         {
             if (!BlackFlashCrit.ModEnabled.Value) return;
 
-            // Keep chance/multiplier current (handles anything that overwrites them)
+            // Update vanilla gate pass once per frame (cheap)
+            VanillaGateCache.UpdateGates();
+
             if (!_searchedValues)
             {
                 _searchedValues = true;
@@ -130,123 +124,66 @@ namespace BlackFlashCrit
             }
             try { _wandererCritChanceFI?.SetValue(null, Mathf.Clamp01(BlackFlashCrit.CustomCritChance.Value)); } catch { }
             try { _wandererCritMultiplierFI?.SetValue(null, Mathf.Max(0f, BlackFlashCrit.CritDamageMultiplier.Value)); } catch { }
-
-            // Unlock crits if the game tries to lock them (e.g., after silk bind)
-            if (!_searchedState)
-            {
-                _searchedState = true;
-                var hcType = __instance?.GetType();
-                _wandererStatePI = hcType?.GetProperty("WandererState", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-
-                // Determine the state type and its 'CriticalHitsLocked' member
-                var stateType = _wandererStatePI?.PropertyType;
-                if (stateType != null)
-                {
-                    _lockedField = stateType.GetField("CriticalHitsLocked", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-                    if (_lockedField == null)
-                    {
-                        _lockedProp = stateType.GetProperty("CriticalHitsLocked", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-                    }
-                }
-            }
-
-            if (_wandererStatePI != null && (__instance != null))
-            {
-                TryUnlockCrits(__instance, _wandererStatePI, _lockedField, _lockedProp);
-            }
-        }
-
-        private static void TryUnlockCrits(object hero, PropertyInfo statePI, FieldInfo lockedField, PropertyInfo lockedProp)
-        {
-            try
-            {
-                var state = statePI.GetValue(hero, null);
-                if (state == null) return;
-
-                if (lockedField != null) lockedField.SetValue(state, false);
-                else if (lockedProp?.CanWrite == true) lockedProp.SetValue(state, false, null);
-
-                // Reassign back (struct semantics)
-                statePI.SetValue(hero, state, null);
-            }
-            catch { /* ignore */ }
         }
     }
 
-    // Ignore silk requirement but keep gating by crest unless "every crest" is on.
-    // IMPORTANT: also clear CriticalHitsLocked here in the same call to ensure the crit check passes this frame.
+    // Performance-safe lucky gate:
+    // - If CritVanillaSilkGate && EveryCrestCanCrit: use cached VanillaGateCache.GatesPass (no reflection here).
+    // - If CritVanillaSilkGate && !EveryCrestCanCrit: leave vanilla behavior intact (no overrides).
+    // - Else: keep your previous behavior (EveryCrestCanCrit -> always lucky; else when Wanderer crest equipped).
     [HarmonyPatch(typeof(HeroController), "get_IsWandererLucky")]
     internal static class HeroController_IsWandererLucky_Patch
     {
-        private static PropertyInfo _wandererStatePI;
-        private static FieldInfo _lockedField;
-        private static PropertyInfo _lockedProp;
-        private static bool _searchedStateMembers;
-
-        static void Postfix(object __instance, ref bool __result)
+        static void Postfix(ref bool __result)
         {
             if (!BlackFlashCrit.ModEnabled.Value) return;
 
-            bool allow =
-                BlackFlashCrit.EveryCrestCanCrit.Value ||
-                SafeIsWandererCrestEquipped();
-
-            if (!allow) return;
-
-            __result = true;
-
-            // Also force-unlock crits immediately (silk gate often locks them)
-            if (!_searchedStateMembers)
+            if (BlackFlashCrit.CritVanillaSilkGate.Value)
             {
-                _searchedStateMembers = true;
-                var hcType = __instance?.GetType();
-                _wandererStatePI = hcType?.GetProperty("WandererState", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-                var stateType = _wandererStatePI?.PropertyType;
-                if (stateType != null)
+                if (BlackFlashCrit.EveryCrestCanCrit.Value)
                 {
-                    _lockedField = stateType.GetField("CriticalHitsLocked", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-                    if (_lockedField == null)
-                        _lockedProp = stateType.GetProperty("CriticalHitsLocked", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+                    __result = VanillaGateCache.GatesPass;
+                    return;
                 }
+
+                // Vanilla gate requested but not "every crest": do not override (keep true vanilla)
+                return;
             }
 
-            if (_wandererStatePI != null)
+            // Non-vanilla gate paths
+            if (BlackFlashCrit.EveryCrestCanCrit.Value)
             {
-                try
-                {
-                    var state = _wandererStatePI.GetValue(__instance, null);
-                    if (state != null)
-                    {
-                        if (_lockedField != null) _lockedField.SetValue(state, false);
-                        else if (_lockedProp?.CanWrite == true) _lockedProp.SetValue(state, false, null);
-                        _wandererStatePI.SetValue(__instance, state, null);
-                    }
-                }
-                catch { /* ignore */ }
+                __result = true;
+                return;
             }
-        }
 
-        private static bool SafeIsWandererCrestEquipped()
-        {
             try
             {
-                // Your build exposes Gameplay.WandererCrest; if it's Status-based, adjust here as needed.
-                // This try/catch prevents NREs if the property isn't present on some versions.
+                // Crest-only mode: allow when Wanderer crest is equipped
                 var crest = Gameplay.WandererCrest;
-                // Prefer Status.IsEquipped if available, else IsEquipped
-                var t = crest?.GetType();
-                var statusPI = t?.GetProperty("Status");
-                if (statusPI != null)
+                if (crest != null)
                 {
-                    var status = statusPI.GetValue(crest, null);
-                    var isEq = status?.GetType().GetProperty("IsEquipped");
-                    if (isEq != null) return (bool)isEq.GetValue(status, null);
+                    var t = crest.GetType();
+                    var statusPI = t.GetProperty("Status", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+                    if (statusPI != null)
+                    {
+                        var status = statusPI.GetValue(crest, null);
+                        var isEq = status?.GetType().GetProperty("IsEquipped", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+                        if (isEq != null && (bool)isEq.GetValue(status, null))
+                        {
+                            __result = true;
+                            return;
+                        }
+                    }
+                    var isEquippedPI = t.GetProperty("IsEquipped", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+                    if (isEquippedPI != null && (bool)isEquippedPI.GetValue(crest, null))
+                    {
+                        __result = true;
+                        return;
+                    }
                 }
-                var isEquippedPI = t?.GetProperty("IsEquipped");
-                if (isEquippedPI != null) return (bool)isEquippedPI.GetValue(crest, null);
             }
             catch { }
-            return false;
         }
     }
 }

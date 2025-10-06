@@ -31,6 +31,65 @@ To change settings, you can edit the config file inside `BepInEx/config` or use 
 
 ---
 
+# Black Flash Mod – Config Guide
+
+Location of config file
+- BepInEx/config/bodyando.silksong.blackflash.cfg
+
+General
+- EnableMod (bool, default: true)
+  - Master on/off switch for the entire mod (visual overlay + crit logic changes).
+  - Turn OFF to restore fully vanilla behavior.
+
+- EveryCrestCanCrit (bool, default: false)
+  - When ON: any crest/tool can roll for a critical hit (subject to silk/luck gates if enabled).
+  - When OFF: only the Wanderer crest path can roll crits (vanilla).
+  - Interaction:
+    - If “CritVanillaSilkGate” is ON, vanilla silk/maggot requirements still apply even with this ON.
+
+Visual
+- CritOverlayScale (float, 0.1–2.0, default: 1.0)
+  - Scales the size of the crit overlay sprites.
+  - Visual only; does not affect damage or chance.
+
+Crit
+- CustomCritChance (float, 0.0–1.0, default: 0.15)
+  - Base critical hit chance used by the game.
+  - Final crit roll in game code uses: EffectiveChance × LuckModifier (Luck comes from vanilla systems like Lucky Dice).
+  - Example: 0.20 means 20% before luck.
+
+- CritDamageMultiplier (float, 0–10, default: 3.0)
+  - How much damage a critical hit deals relative to a normal hit.
+  - Example: 3.0 means criticals deal 3× damage.
+  - Visual overlay is unaffected.
+
+- CritVanillaSilkGate (bool, default: false)
+  - When ON: restore vanilla gating for crits (requires being free from maggots and having at least 9 silk).
+  - Applies even if “EveryCrestCanCrit” is ON (i.e., vanilla silk gate still enforced).
+  - When OFF: the mod ignores the silk/maggot gate so your CustomCritChance applies consistently.
+
+Ramping Crit (optional streak mechanic)
+- CritRampingEnabled (bool, default: false)
+  - When ON: your current crit chance ramps up after each successful hit, and slowly resets after inactivity.
+
+- CritRampingIncreasePercent (float, 0.0–1.0, default: 0.05)
+  - Multiplicative increase applied to your current crit chance after each successful hit.
+  - Formula after N hits: CurrentChance = BaseChance × (1 + IncreasePercent)^N, clamped to max 1.0.
+  - Example: Base 0.20 and Increase 0.10 → 1st hit 0.22, 2nd 0.242, 3rd 0.2662, etc.
+
+- CritRampingDecaySeconds (float, 0.5–60, default: 10.0)
+  - Time since your last successful hit after which the ramped chance resets back to BaseChance.
+  - A “successful hit” means a hero-to-enemy hit that lands (not self-damage).
+
+Notes and tips
+- Lucky Dice: The mod does not change luck. Vanilla “luck” (including Lucky Dice) multiplies your effective chance as usual.
+- First-hit behavior: The mod applies your settings on hero load and keeps them synced so crit rolls use the latest values immediately.
+- Balance suggestions:
+  - If you enable ramping, consider slightly lower BaseChance to avoid always hitting 100% during long combos.
+  - Very high CritDamageMultiplier (e.g., >4) can trivialize encounters; adjust to taste.
+
+---
+
 ## Troubleshooting
 
 ### Mod doesn’t load

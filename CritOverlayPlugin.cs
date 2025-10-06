@@ -30,8 +30,15 @@ namespace BlackFlashCrit
         internal static ConfigEntry<bool> EveryCrestCanCrit;
         internal static ConfigEntry<float> CustomCritChance;
         internal static ConfigEntry<float> CritDamageMultiplier;
+        internal static ConfigEntry<bool> CritVanillaSilkGate;
+
         internal static ConfigEntry<float> CritOverlayScale;
         internal static ConfigEntry<bool> DisplayCritOverlay;
+
+        internal static ConfigEntry<bool> CritRampingEnabled;
+        internal static ConfigEntry<float> CritRampingIncreasePercent;
+        internal static ConfigEntry<float> CritRampingDecaySeconds;
+
 
         // Debounce state for CustomCritChance logging
         private const float CritChanceLogDebounceSeconds = 0.15f;
@@ -82,8 +89,6 @@ namespace BlackFlashCrit
                 _critOverlayScaleLastChangeRealtime = Time.realtimeSinceStartup;
             };
 
-
-
             CustomCritChance = Config.Bind("Crit", "CustomCritChance", 0.15f,
                 new ConfigDescription("Custom critical chance (0.0 - 1.0).", new AcceptableValueRange<float>(0f, 1f)));
             CustomCritChance.SettingChanged += (sender, args) =>
@@ -101,6 +106,19 @@ namespace BlackFlashCrit
                 _critDamageMultiplierDirty = true;
                 _critDamageMultiplierLastChangeRealtime = Time.realtimeSinceStartup;
             };
+
+            CritVanillaSilkGate = Config.Bind("Crit", "CritVanillaSilkGate", false,
+                "When ON: use vanilla gating (requires free from maggots and 9+ silk). This applies even if EveryCrestCanCrit is true.");
+            CritVanillaSilkGate.SettingChanged += (sender, args) => Log.LogInfo($"CritVanillaSilkGate is now {(CritVanillaSilkGate.Value ? "ON" : "OFF")}");
+            
+            CritRampingEnabled = Config.Bind("Crit", "CritRampingEnabled", false,
+                "When ON: each successful hit increases the current crit chance multiplicatively by CritRampingIncreasePercent. Resets after CritRampingDecaySeconds.");
+            CritRampingEnabled.SettingChanged += (sender, args) => Log.LogInfo($"CritRampingEnabled is now {(CritRampingEnabled.Value ? "ON" : "OFF")}");
+
+            CritRampingIncreasePercent = Config.Bind("Crit", "CritRampingIncreasePercent", 0.05f,
+                new ConfigDescription("Per-hit multiplicative increase (e.g., 0.10 means +10% multiplicatively).", new AcceptableValueRange<float>(0f, 1f)));
+            CritRampingDecaySeconds = Config.Bind("Crit", "CritRampingDecaySeconds", 10f,
+                new ConfigDescription("Time in seconds after last hit to reset crit chance back to base.", new AcceptableValueRange<float>(0.5f, 60f)));
         }
 
         private void Update()
