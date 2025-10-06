@@ -14,7 +14,7 @@ namespace BlackFlashCrit
     {
         public const string PluginGuid = "bodyando.silksong.blackflash";
         public const string PluginName = "Black Flash Mod";
-        public const string PluginVersion = "1.0.0";
+        public const string PluginVersion = "1.1.0";
 
         internal static ManualLogSource Log;
         internal static Harmony HarmonyInstance;
@@ -30,7 +30,9 @@ namespace BlackFlashCrit
         internal static ConfigEntry<bool> EveryCrestCanCrit;
         internal static ConfigEntry<float> CustomCritChance;
         internal static ConfigEntry<float> CritDamageMultiplier;
-        
+        internal static ConfigEntry<float> CritOverlayScale;
+        internal static ConfigEntry<bool> DisplayCritOverlay;
+
         // Debounce state for CustomCritChance logging
         private const float CritChanceLogDebounceSeconds = 0.15f;
         private bool _critChanceDirty;
@@ -43,11 +45,17 @@ namespace BlackFlashCrit
         private float _critDamageMultiplierLastChangeRealtime;
         private float _pendingCritDamageMultiplierValue;
 
+        // Debounce state for CritOverlayScale logging
+        private const float CritOverlayScaleLogDebounceSeconds = 0.15f;
+        private bool _critOverlayScaleDirty;
+        private float _critOverlayScaleLastChangeRealtime;
+        private float _pendingCritOverlayScaleValue;
+
         private void Awake()
         {
             Log = Logger;
             HarmonyInstance = new Harmony(PluginGuid);
-           
+
             InitConfig();
             TryLoadSprites();
             TryPatch();
@@ -62,9 +70,22 @@ namespace BlackFlashCrit
             EveryCrestCanCrit = Config.Bind("General", "EveryCrestCanCrit", false, "If true, all crests can trigger critical hits. If false, only the Wanderer crit crest can.");
             EveryCrestCanCrit.SettingChanged += (sender, args) => Log.LogInfo($"EveryCrestCanCrit is now {(EveryCrestCanCrit.Value ? "ON" : "OFF")}");
 
+            DisplayCritOverlay = Config.Bind("Visual", "DisplayCritOverlay", true, "If true, display custom sprites.");
+            DisplayCritOverlay.SettingChanged += (sender, args) => Log.LogInfo($"DisplayCritOverlay is now {(DisplayCritOverlay.Value ? "ON" : "OFF")}");
+
+            CritOverlayScale = Config.Bind("Visual", "CritOverlayScale", 1f,
+                new ConfigDescription("Scale multiplier for the crit overlay images.", new AcceptableValueRange<float>(0.1f, 2f)));
+            CritOverlayScale.SettingChanged += (sender, args) =>
+            {
+                _pendingCritOverlayScaleValue = CritOverlayScale.Value;
+                _critOverlayScaleDirty = true;
+                _critOverlayScaleLastChangeRealtime = Time.realtimeSinceStartup;
+            };
+
+
+
             CustomCritChance = Config.Bind("Crit", "CustomCritChance", 0.15f,
                 new ConfigDescription("Custom critical chance (0.0 - 1.0).", new AcceptableValueRange<float>(0f, 1f)));
-            // Debounce logging
             CustomCritChance.SettingChanged += (sender, args) =>
             {
                 _pendingCritChanceValue = CustomCritChance.Value;
@@ -73,8 +94,7 @@ namespace BlackFlashCrit
             };
 
             CritDamageMultiplier = Config.Bind("Crit", "CritDamageMultiplier", 3f,
-                    new ConfigDescription("Critical hit damage multiplier applied by the game.", new AcceptableValueRange<float>(0f, 10f)));
-
+                new ConfigDescription("Critical hit damage multiplier applied by the game.", new AcceptableValueRange<float>(0f, 10f)));
             CritDamageMultiplier.SettingChanged += (sender, args) =>
             {
                 _pendingCritDamageMultiplierValue = CritDamageMultiplier.Value;
@@ -85,7 +105,6 @@ namespace BlackFlashCrit
 
         private void Update()
         {
-            // Debounce (logs once after slider stops moving for CritChanceLogDebounceSeconds)
             if (_critChanceDirty && Time.realtimeSinceStartup - _critChanceLastChangeRealtime >= CritChanceLogDebounceSeconds)
             {
                 Log.LogInfo($"CustomCritChance is now {_pendingCritChanceValue}");
@@ -95,6 +114,11 @@ namespace BlackFlashCrit
             {
                 Log.LogInfo($"CritDamageMultiplier is now {_pendingCritDamageMultiplierValue}");
                 _critDamageMultiplierDirty = false;
+            }
+            if (_critOverlayScaleDirty && Time.realtimeSinceStartup - _critOverlayScaleLastChangeRealtime >= CritOverlayScaleLogDebounceSeconds)
+            {
+                Log.LogInfo($"CritOverlayScale is now {_pendingCritOverlayScaleValue}");
+                _critOverlayScaleDirty = false;
             }
         }
 
@@ -108,7 +132,6 @@ namespace BlackFlashCrit
                 CritSprite2 = LoadSpriteOrWarn(Path.Combine(pluginDir, OverlayImageFile + "_2.png"), "Image2");
                 CritSprite3 = LoadSpriteOrWarn(Path.Combine(pluginDir, OverlayImageFile + "_3.png"), "Image3");
 
-                // If none loaded, make a placeholder so we still show something
                 if (CritSprite1 == null && CritSprite2 == null && CritSprite3 == null)
                 {
                     Log.LogWarning("No overlay images loaded. Creating placeholder.");
@@ -149,6 +172,7 @@ namespace BlackFlashCrit
                 return null;
             }
         }
+
         private Sprite MakePlaceholder(int w, int h, Color32 c)
         {
             var tex = new Texture2D(w, h, TextureFormat.RGBA32, false);
