@@ -34,7 +34,8 @@ namespace BlackFlashCrit
             var go = c.gameObject;
             if (go.CompareTag("Player")) return;
 
-            BlackFlashCrit.SpawnCritOverlay(go.transform);
+            if (BlackFlashCrit.DisplayCritOverlay.Value)
+                BlackFlashCrit.SpawnCritOverlay(go.transform);
         }
     }
 
@@ -151,42 +152,101 @@ namespace BlackFlashCrit
 
             if (_wandererStatePI != null && (__instance != null))
             {
+                TryUnlockCrits(__instance, _wandererStatePI, _lockedField, _lockedProp);
+            }
+        }
+
+        private static void TryUnlockCrits(object hero, PropertyInfo statePI, FieldInfo lockedField, PropertyInfo lockedProp)
+        {
+            try
+            {
+                var state = statePI.GetValue(hero, null);
+                if (state == null) return;
+
+                if (lockedField != null) lockedField.SetValue(state, false);
+                else if (lockedProp?.CanWrite == true) lockedProp.SetValue(state, false, null);
+
+                // Reassign back (struct semantics)
+                statePI.SetValue(hero, state, null);
+            }
+            catch { /* ignore */ }
+        }
+    }
+
+    // Ignore silk requirement but keep gating by crest unless "every crest" is on.
+    // IMPORTANT: also clear CriticalHitsLocked here in the same call to ensure the crit check passes this frame.
+    [HarmonyPatch(typeof(HeroController), "get_IsWandererLucky")]
+    internal static class HeroController_IsWandererLucky_Patch
+    {
+        private static PropertyInfo _wandererStatePI;
+        private static FieldInfo _lockedField;
+        private static PropertyInfo _lockedProp;
+        private static bool _searchedStateMembers;
+
+        static void Postfix(object __instance, ref bool __result)
+        {
+            if (!BlackFlashCrit.ModEnabled.Value) return;
+
+            bool allow =
+                BlackFlashCrit.EveryCrestCanCrit.Value ||
+                SafeIsWandererCrestEquipped();
+
+            if (!allow) return;
+
+            __result = true;
+
+            // Also force-unlock crits immediately (silk gate often locks them)
+            if (!_searchedStateMembers)
+            {
+                _searchedStateMembers = true;
+                var hcType = __instance?.GetType();
+                _wandererStatePI = hcType?.GetProperty("WandererState", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+                var stateType = _wandererStatePI?.PropertyType;
+                if (stateType != null)
+                {
+                    _lockedField = stateType.GetField("CriticalHitsLocked", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+                    if (_lockedField == null)
+                        _lockedProp = stateType.GetProperty("CriticalHitsLocked", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+                }
+            }
+
+            if (_wandererStatePI != null)
+            {
                 try
                 {
                     var state = _wandererStatePI.GetValue(__instance, null);
                     if (state != null)
                     {
-                        // Set locked=false on the boxed struct/object
-                        if (_lockedField != null)
-                        {
-                            _lockedField.SetValue(state, false);
-                        }
-                        else if (_lockedProp?.CanWrite == true)
-                        {
-                            _lockedProp.SetValue(state, false, null);
-                        }
-                        // Reassign back (struct copy semantics)
+                        if (_lockedField != null) _lockedField.SetValue(state, false);
+                        else if (_lockedProp?.CanWrite == true) _lockedProp.SetValue(state, false, null);
                         _wandererStatePI.SetValue(__instance, state, null);
                     }
                 }
                 catch { /* ignore */ }
             }
         }
-    }
 
-    // Don’t let the "lucky" gate block custom crits
-    [HarmonyPatch(typeof(HeroController), "get_IsWandererLucky")]
-    internal static class HeroController_IsWandererLucky_Patch
-    {
-        static void Postfix(ref bool __result)
+        private static bool SafeIsWandererCrestEquipped()
         {
-            if (!BlackFlashCrit.ModEnabled.Value) return;
-            if (!BlackFlashCrit.EveryCrestCanCrit.Value)
+            try
             {
-                if (!Gameplay.WandererCrest.IsEquipped) return;
+                // Your build exposes Gameplay.WandererCrest; if it's Status-based, adjust here as needed.
+                // This try/catch prevents NREs if the property isn't present on some versions.
+                var crest = Gameplay.WandererCrest;
+                // Prefer Status.IsEquipped if available, else IsEquipped
+                var t = crest?.GetType();
+                var statusPI = t?.GetProperty("Status");
+                if (statusPI != null)
+                {
+                    var status = statusPI.GetValue(crest, null);
+                    var isEq = status?.GetType().GetProperty("IsEquipped");
+                    if (isEq != null) return (bool)isEq.GetValue(status, null);
+                }
+                var isEquippedPI = t?.GetProperty("IsEquipped");
+                if (isEquippedPI != null) return (bool)isEquippedPI.GetValue(crest, null);
             }
-
-            __result = true; 
+            catch { }
+            return false;
         }
     }
 }
