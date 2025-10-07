@@ -1,206 +1,182 @@
 ﻿using BepInEx;
 using BepInEx.Configuration;
-using BepInEx.Logging;
 using HarmonyLib;
 using System;
+using System.Collections.Generic;
+using System.ComponentModel;
 using System.IO;
+using System.Linq;
 using System.Reflection;
 using UnityEngine;
 
-namespace BlackFlashCrit
-{
-    [BepInPlugin(PluginGuid, PluginName, PluginVersion)]
-    public class BlackFlashCrit : BaseUnityPlugin
-    {
-        public const string PluginGuid = "bodyando.silksong.blackflash";
-        public const string PluginName = "Black Flash Mod";
-        public const string PluginVersion = "1.1.0";
+namespace BlackFlashCrit {
+	[BepInPlugin(PluginGuid, PluginName, PluginVersion)]
+	public class BlackFlashCrit : BaseUnityPlugin {
+		public const string PluginGuid = "bodyando.silksong.blackflash";
+		public const string PluginName = "Black Flash Mod";
+		public const string PluginVersion = "1.1.0";
 
-        internal static ManualLogSource Log;
-        internal static Harmony HarmonyInstance;
+		internal static Sprite[] SpritesArray;
 
-        // Sprites
-        internal static Sprite CritSprite1;
-        internal static Sprite CritSprite2;
-        internal static Sprite CritSprite3;
-        private const string OverlayImageFile = "black_flash";
+		// Config Settings
+		// General
+		internal static ConfigEntry<bool> ModEnabled;
+		internal static ConfigEntry<bool> EveryCrestCanCrit;
+		internal static ConfigEntry<bool> SkipCritChecks;
+		// Visual
+		internal static ConfigEntry<float> CritOverlayScale;
+		internal static ConfigEntry<bool> DisplayCritOverlay;
+		internal static ConfigEntry<int> CritBurstMinFrames;
+		internal static ConfigEntry<int> CritBurstMaxFrames;
+		// Crit
+		internal static ConfigEntry<float> CustomCritChance;
+		internal static ConfigEntry<float> CritDamageMultiplier;
 
-        // Config
-        internal static ConfigEntry<bool> ModEnabled;
-        internal static ConfigEntry<bool> EveryCrestCanCrit;
-        internal static ConfigEntry<float> CustomCritChance;
-        internal static ConfigEntry<float> CritDamageMultiplier;
-        internal static ConfigEntry<float> CritOverlayScale;
-        internal static ConfigEntry<bool> DisplayCritOverlay;
+		// Debounced loggers
+		private Log.Debounced<float> _critChanceLogger;
+		private Log.Debounced<float> _critMultiplierLogger;
+		private Log.Debounced<float> _overlayScaleLogger;
 
-        // Debounce state for CustomCritChance logging
-        private const float CritChanceLogDebounceSeconds = 0.15f;
-        private bool _critChanceDirty;
-        private float _critChanceLastChangeRealtime;
-        private float _pendingCritChanceValue;
+		private Harmony _harmony;
 
-        // Debounce state for CritDamageMultiplier logging
-        private const float CritDamageMultiplierLogDebounceSeconds = 0.15f;
-        private bool _critDamageMultiplierDirty;
-        private float _critDamageMultiplierLastChangeRealtime;
-        private float _pendingCritDamageMultiplierValue;
+		private void Awake () {
+			Log.LogSource = Logger;
+			_harmony = new Harmony(PluginGuid);
 
-        // Debounce state for CritOverlayScale logging
-        private const float CritOverlayScaleLogDebounceSeconds = 0.15f;
-        private bool _critOverlayScaleDirty;
-        private float _critOverlayScaleLastChangeRealtime;
-        private float _pendingCritOverlayScaleValue;
+			InitConfig();
+			TryLoadSprites();
+			TryPatch();
+			Log.Info($"{PluginName} loaded.");
+		}
 
-        private void Awake()
-        {
-            Log = Logger;
-            HarmonyInstance = new Harmony(PluginGuid);
+		private void InitConfig () {
+			ModEnabled = Config.Bind("General", "EnableMod", true, "Enable or disable mod");
+			ModEnabled.SettingChanged += (sender, args) => Log.Info($"{PluginName} is now {(ModEnabled.Value ? "ON" : "OFF")}");
 
-            InitConfig();
-            TryLoadSprites();
-            TryPatch();
-            Log.LogInfo($"{PluginName} loaded.");
-        }
+			EveryCrestCanCrit = Config.Bind("General", "EveryCrestCanCrit", false, "If true, all crests can trigger critical hits. If false, only the Wanderer crit crest can.");
+			EveryCrestCanCrit.SettingChanged += (sender, args) => Log.Info($"EveryCrestCanCrit is now {(EveryCrestCanCrit.Value ? "ON" : "OFF")}");
 
-        private void InitConfig()
-        {
-            ModEnabled = Config.Bind("General", "EnableMod", true, "Enable or disable mod");
-            ModEnabled.SettingChanged += (sender, args) => Log.LogInfo($"{PluginName} is now {(ModEnabled.Value ? "ON" : "OFF")}");
+			SkipCritChecks = Config.Bind("General", "SkipCritChecks", false, "If true, skip checks for critical hits. If false, use vanilla game checks (Player should not be covered in maggots and have 9 or more silk).");
+			SkipCritChecks.SettingChanged += (sender, args) => Log.Info($"SkipCritChecks is now {(SkipCritChecks.Value ? "ON" : "OFF")}");
 
-            EveryCrestCanCrit = Config.Bind("General", "EveryCrestCanCrit", false, "If true, all crests can trigger critical hits. If false, only the Wanderer crit crest can.");
-            EveryCrestCanCrit.SettingChanged += (sender, args) => Log.LogInfo($"EveryCrestCanCrit is now {(EveryCrestCanCrit.Value ? "ON" : "OFF")}");
+			DisplayCritOverlay = Config.Bind("Visual", "DisplayCritOverlay", true, "If true, display custom sprites.");
+			DisplayCritOverlay.SettingChanged += (sender, args) => Log.Info($"DisplayCritOverlay is now {(DisplayCritOverlay.Value ? "ON" : "OFF")}");
 
-            DisplayCritOverlay = Config.Bind("Visual", "DisplayCritOverlay", true, "If true, display custom sprites.");
-            DisplayCritOverlay.SettingChanged += (sender, args) => Log.LogInfo($"DisplayCritOverlay is now {(DisplayCritOverlay.Value ? "ON" : "OFF")}");
+			CritOverlayScale = Config.Bind("Visual", "CritOverlayScale", 1f,
+				new ConfigDescription("Scale multiplier for the crit overlay images.", new AcceptableValueRange<float>(0.1f, 2f)));
+			_overlayScaleLogger = new Log.Debounced<float>(v => Log.Info($"CritOverlayScale is now {v}"), 0.15f);
+			CritOverlayScale.SettingChanged += (sender, args) => _overlayScaleLogger.Set(CritOverlayScale.Value);
 
-            CritOverlayScale = Config.Bind("Visual", "CritOverlayScale", 1f,
-                new ConfigDescription("Scale multiplier for the crit overlay images.", new AcceptableValueRange<float>(0.1f, 2f)));
-            CritOverlayScale.SettingChanged += (sender, args) =>
-            {
-                _pendingCritOverlayScaleValue = CritOverlayScale.Value;
-                _critOverlayScaleDirty = true;
-                _critOverlayScaleLastChangeRealtime = Time.realtimeSinceStartup;
-            };
+			CustomCritChance = Config.Bind("Crit", "CustomCritChance", 0.15f,
+				new ConfigDescription("Custom critical chance (0.0 - 1.0).", new AcceptableValueRange<float>(0f, 1f)));
+			_critChanceLogger = new Log.Debounced<float>(v => Log.Info($"CustomCritChance is now {v}"), 0.15f);
+			CustomCritChance.SettingChanged += (sender, args) => _critChanceLogger.Set(CustomCritChance.Value);
 
+			CritDamageMultiplier = Config.Bind("Crit", "CritDamageMultiplier", 3f,
+				new ConfigDescription("Critical hit damage multiplier applied by the game.", new AcceptableValueRange<float>(0f, 10f)));
+			_critMultiplierLogger = new Log.Debounced<float>(v => Log.Info($"CritDamageMultiplier is now {v}"), 0.15f);
+			CritDamageMultiplier.SettingChanged += (sender, args) => _critMultiplierLogger.Set(CritDamageMultiplier.Value);
 
+			CritBurstMinFrames = Config.Bind("Hidden", "CritBurstMinFrames", 5,
+				new ConfigDescription("Minimum frames in between Black Flash burst frames (ADVANCED, hidden from UI).", null,
+					new BrowsableAttribute(false))
+			);
 
-            CustomCritChance = Config.Bind("Crit", "CustomCritChance", 0.15f,
-                new ConfigDescription("Custom critical chance (0.0 - 1.0).", new AcceptableValueRange<float>(0f, 1f)));
-            CustomCritChance.SettingChanged += (sender, args) =>
-            {
-                _pendingCritChanceValue = CustomCritChance.Value;
-                _critChanceDirty = true;
-                _critChanceLastChangeRealtime = Time.realtimeSinceStartup;
-            };
+			CritBurstMaxFrames = Config.Bind("Hidden", "CritBurstMaxFrames", 10,
+				new ConfigDescription("Maximum frames in between Black Flash burst frames (ADVANCED, hidden from UI).", null,
+					new BrowsableAttribute(false))
+			);
+		}
 
-            CritDamageMultiplier = Config.Bind("Crit", "CritDamageMultiplier", 3f,
-                new ConfigDescription("Critical hit damage multiplier applied by the game.", new AcceptableValueRange<float>(0f, 10f)));
-            CritDamageMultiplier.SettingChanged += (sender, args) =>
-            {
-                _pendingCritDamageMultiplierValue = CritDamageMultiplier.Value;
-                _critDamageMultiplierDirty = true;
-                _critDamageMultiplierLastChangeRealtime = Time.realtimeSinceStartup;
-            };
-        }
+		private void Update () {
+			_critChanceLogger.Update();
+			_critMultiplierLogger.Update();
+			_overlayScaleLogger.Update();
+		}
 
-        private void Update()
-        {
-            if (_critChanceDirty && Time.realtimeSinceStartup - _critChanceLastChangeRealtime >= CritChanceLogDebounceSeconds)
-            {
-                Log.LogInfo($"CustomCritChance is now {_pendingCritChanceValue}");
-                _critChanceDirty = false;
-            }
-            if (_critDamageMultiplierDirty && Time.realtimeSinceStartup - _critDamageMultiplierLastChangeRealtime >= CritDamageMultiplierLogDebounceSeconds)
-            {
-                Log.LogInfo($"CritDamageMultiplier is now {_pendingCritDamageMultiplierValue}");
-                _critDamageMultiplierDirty = false;
-            }
-            if (_critOverlayScaleDirty && Time.realtimeSinceStartup - _critOverlayScaleLastChangeRealtime >= CritOverlayScaleLogDebounceSeconds)
-            {
-                Log.LogInfo($"CritOverlayScale is now {_pendingCritOverlayScaleValue}");
-                _critOverlayScaleDirty = false;
-            }
-        }
+		private void TryLoadSprites () {
+			try {
+				string pluginDir = Path.GetDirectoryName(Info.Location);
+				string imagesDir = Path.Combine(pluginDir, "images");
 
-        private void TryLoadSprites()
-        {
-            try
-            {
-                string pluginDir = Path.GetDirectoryName(Info.Location);
+				if (!Directory.Exists(imagesDir)) {
+					Log.Warn($"Images directory not found at {imagesDir}. No overlay images loaded.");
+					SpritesArray = new Sprite[0];
+					return;
+				}
 
-                CritSprite1 = LoadSpriteOrWarn(Path.Combine(pluginDir, OverlayImageFile + "_1.png"), "Image1");
-                CritSprite2 = LoadSpriteOrWarn(Path.Combine(pluginDir, OverlayImageFile + "_2.png"), "Image2");
-                CritSprite3 = LoadSpriteOrWarn(Path.Combine(pluginDir, OverlayImageFile + "_3.png"), "Image3");
+				var imageFiles = Directory.GetFiles(imagesDir, "*.png").OrderBy(f => f).ToArray();
 
-                if (CritSprite1 == null && CritSprite2 == null && CritSprite3 == null)
-                {
-                    Log.LogWarning("No overlay images loaded. Creating placeholder.");
-                    CritSprite1 = MakePlaceholder(32, 32, new Color32(255, 0, 0, 180));
-                }
-            }
-            catch (Exception e)
-            {
-                Log.LogError($"Error loading overlay sprites: {e}");
-                if (CritSprite1 == null && CritSprite2 == null && CritSprite3 == null)
-                    CritSprite1 = MakePlaceholder(32, 32, new Color32(255, 0, 0, 180));
-            }
-        }
+				if (imageFiles.Length == 0) {
+					Log.Warn($"No PNG files found in images directory {imagesDir}. No overlay images loaded.");
+					SpritesArray = new Sprite[0];
+					return;
+				}
 
-        private Sprite LoadSpriteOrWarn(string path, string label)
-        {
-            if (!File.Exists(path))
-            {
-                Log.LogWarning($"{label}: file not found at {path}");
-                return null;
-            }
+				var spriteList = new List<Sprite>();
+				foreach (var path in imageFiles) {
+					var tempSprite = LoadSpriteOrWarn(path, Path.GetFileName(path));
+					if (tempSprite != null) {
+						spriteList.Add(tempSprite);
+					}
+				}
 
-            try
-            {
-                byte[] data = File.ReadAllBytes(path);
-                var tex = new Texture2D(2, 2, TextureFormat.RGBA32, false);
-                if (!tex.LoadImage(data))
-                {
-                    Log.LogError($"{label}: failed to decode image at {path}");
-                    return null;
-                }
-                Log.LogInfo($"{label}: loaded {Path.GetFileName(path)} ({tex.width}x{tex.height})");
-                return Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f), 64f);
-            }
-            catch (Exception e)
-            {
-                Log.LogError($"{label}: error loading image at {path}: {e.Message}");
-                return null;
-            }
-        }
+				if (spriteList.Count == 0) {
+					Log.Warn("No valid overlay images loaded. Creating placeholder.");
+					spriteList.Add(MakePlaceholder(32, 32, new Color32(255, 0, 0, 180)));
+				}
+				SpritesArray = spriteList.ToArray();
+			}
+			catch (Exception e) {
+				Log.Error($"Error loading overlay sprites: {e}");
+				SpritesArray = new Sprite[] { MakePlaceholder(32, 32, new Color32(255, 0, 0, 180)) };
+			}
+		}
 
-        private Sprite MakePlaceholder(int w, int h, Color32 c)
-        {
-            var tex = new Texture2D(w, h, TextureFormat.RGBA32, false);
-            var pixels = new Color32[w * h];
-            for (int i = 0; i < pixels.Length; i++) pixels[i] = c;
-            tex.SetPixels32(pixels);
-            tex.Apply();
-            return Sprite.Create(tex, new Rect(0, 0, w, h), new Vector2(0.5f, 0.5f), w);
-        }
+		private Sprite LoadSpriteOrWarn (string path, string label) {
+			if (!File.Exists(path)) {
+				Log.Warn($"{label}: file not found at {path}");
+				return null;
+			}
 
-        private void TryPatch()
-        {
-            try
-            {
-                HarmonyInstance.PatchAll(Assembly.GetExecutingAssembly());
-            }
-            catch (Exception e)
-            {
-                Log.LogError($"Harmony patch failed: {e}");
-            }
-        }
+			try {
+				byte[] data = File.ReadAllBytes(path);
+				var tex = new Texture2D(2, 2, TextureFormat.RGBA32, false);
+				if (!tex.LoadImage(data)) {
+					Log.Error($"{label}: failed to decode image at {path}");
+					return null;
+				}
+				Log.Info($"{label}: loaded {Path.GetFileName(path)} ({tex.width}x{tex.height})");
+				return Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f), 64f);
+			}
+			catch (Exception e) {
+				Log.Error($"{label}: error loading image at {path}: {e.Message}");
+				return null;
+			}
+		}
 
-        internal static void SpawnCritOverlay(Transform target)
-        {
-            if (!ModEnabled.Value || target == null) return;
+		private Sprite MakePlaceholder (int w, int h, Color32 c) {
+			var tex = new Texture2D(w, h, TextureFormat.RGBA32, false);
+			var pixels = new Color32[w * h];
+			for (int i = 0; i < pixels.Length; i++) pixels[i] = c;
+			tex.SetPixels32(pixels);
+			tex.Apply();
+			return Sprite.Create(tex, new Rect(0, 0, w, h), new Vector2(0.5f, 0.5f), w);
+		}
 
-            var sprites = new Sprite[] { CritSprite1, CritSprite2, CritSprite3 };
-            CritOverlayBurst.PlayBurst(target, sprites);
-        }
-    }
+		private void TryPatch () {
+			try {
+				_harmony.PatchAll(Assembly.GetExecutingAssembly());
+			}
+			catch (Exception e) {
+				Log.Error($"Harmony patch failed: {e}");
+			}
+		}
+
+		internal static void SpawnCritOverlay (Transform target) {
+			if (!ModEnabled.Value || target == null) return;
+			if (SpritesArray == null || SpritesArray.Length == 0) return;
+			CritOverlayBurst.PlayBurst(target, SpritesArray);
+		}
+	}
 }
