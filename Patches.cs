@@ -3,11 +3,16 @@ using GlobalSettings;
 using HarmonyLib;
 using System;
 using System.Reflection;
+using System.Linq.Expressions;
 using UnityEngine;
 
 namespace BlackFlashCrit {
 	[HarmonyPatch]
 	internal static class HealthManager_TakeDamage_Patch {
+		// Cache compiled accessor for HitInstance.CriticalHit to avoid per-call reflection
+		private static Func<object, bool> s_GetCriticalHit;
+		private static bool s_TriedBuildAccessor;
+
 		static MethodBase TargetMethod () {
 			// Target the TakeDamage method in HealthManager that takes a HitInstance parameter
 			var hmType = AccessTools.TypeByName("HealthManager");
@@ -17,16 +22,27 @@ namespace BlackFlashCrit {
 		static void Postfix (object __instance, object hitInstance) {
 			if (!BlackFlashCrit.ModEnabled.Value || __instance == null || hitInstance == null) return;
 
-			// Try to get the "CriticalHit" field using reflection
+			// Build compiled accessor once instead of using reflection every hit
+			EnsureCriticalHitAccessor(hitInstance);
+
 			bool isCrit = false;
-			try {
-				var critField = hitInstance.GetType().GetField("CriticalHit", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-				if (critField != null)
-					isCrit = (bool)critField.GetValue(hitInstance);
+			if (s_GetCriticalHit != null) {
+				// Fast delegate call
+				isCrit = s_GetCriticalHit(hitInstance); // Use compiled accessor
 			}
-			catch {
-				return;
+			else {
+				// Fallback path (should rarely/never happen after first success)
+				try {
+					var critField = hitInstance.GetType().GetField("CriticalHit", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+					if (critField != null) {
+						isCrit = (bool)critField.GetValue(hitInstance);
+					}
+				}
+				catch {
+					return;
+				}
 			}
+
 			if (!isCrit) return;
 
 			// Only spawn overlay on non-player targets
@@ -34,6 +50,30 @@ namespace BlackFlashCrit {
 
 			if (BlackFlashCrit.DisplayCritOverlay.Value)
 				BlackFlashCrit.SpawnCritOverlay(c.transform);
+		}
+
+		// Builds a compiled delegate: (object o) => ((HitInstance)o).CriticalHit
+		private static void EnsureCriticalHitAccessor (object sampleHitInstance) {
+			if (s_TriedBuildAccessor) return;
+			s_TriedBuildAccessor = true;
+
+			try {
+				Type hitType = sampleHitInstance.GetType();
+				var field = hitType.GetField("CriticalHit", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+				if (field == null || field.FieldType != typeof(bool)) return;
+
+				// Build: (object obj) => ((HitType)obj).CriticalHit
+				var objParam = Expression.Parameter(typeof(object), "obj");
+				var casted = Expression.Convert(objParam, hitType);
+				var fieldExpr = Expression.Field(casted, field);
+				var body = Expression.Convert(fieldExpr, typeof(bool));
+				var lambda = Expression.Lambda<Func<object, bool>>(body, objParam);
+
+				s_GetCriticalHit = lambda.Compile();
+			}
+			catch {
+				// ignore; fallback path will be used
+			}
 		}
 	}
 
@@ -86,7 +126,7 @@ namespace BlackFlashCrit {
 			// Only Wanderer Crest can crit and skip checks
 			if (!BlackFlashCrit.EveryCrestCanCrit.Value && BlackFlashCrit.SkipCritChecks.Value) {
 				if (!Gameplay.WandererCrest.IsEquipped) return;
-				
+
 				__result = true;
 				return;
 			}
