@@ -14,7 +14,7 @@ namespace BlackFlashCrit {
 	public class BlackFlashCrit : BaseUnityPlugin {
 		public const string PluginGuid = "bodyando.silksong.blackflash";
 		public const string PluginName = "Black Flash Mod";
-		public const string PluginVersion = "1.1.0";
+		public const string PluginVersion = "1.3.0";
 
 		internal static Sprite[] SpritesArray;
 
@@ -28,7 +28,7 @@ namespace BlackFlashCrit {
 		internal static ConfigEntry<bool> DisplayCritOverlay;
 		internal static ConfigEntry<int> CritBurstMinFrames;
 		internal static ConfigEntry<int> CritBurstMaxFrames;
-		// Crit
+		// Crit (base values)
 		internal static ConfigEntry<float> CustomCritChance;
 		internal static ConfigEntry<float> CritDamageMultiplier;
 
@@ -44,6 +44,9 @@ namespace BlackFlashCrit {
 			_harmony = new Harmony(PluginGuid);
 
 			InitConfig();
+			// Initialize the ramping feature in its own module
+			CritRamp.Init(Config);
+
 			TryLoadSprites();
 			TryPatch();
 			Log.Info($"{PluginName} loaded.");
@@ -67,10 +70,14 @@ namespace BlackFlashCrit {
 			_overlayScaleLogger = new Log.Debounced<float>(v => Log.Info($"CritOverlayScale is now {v}"), 0.15f);
 			CritOverlayScale.SettingChanged += (sender, args) => _overlayScaleLogger.Set(CritOverlayScale.Value);
 
-			CustomCritChance = Config.Bind("Crit", "CustomCritChance", 0.15f,
-				new ConfigDescription("Custom critical chance (0.0 - 1.0).", new AcceptableValueRange<float>(0f, 1f)));
-			_critChanceLogger = new Log.Debounced<float>(v => Log.Info($"CustomCritChance is now {v}"), 0.15f);
-			CustomCritChance.SettingChanged += (sender, args) => _critChanceLogger.Set(CustomCritChance.Value);
+			CustomCritChance = Config.Bind("Crit", "CustomCritChance", 0.20f,
+				new ConfigDescription("Base critical chance (0.0 - 1.0).", new AcceptableValueRange<float>(0f, 1f)));
+			_critChanceLogger = new Log.Debounced<float>(v => Log.Info($"CustomCritChance (base) is now {v}"), 0.15f);
+			CustomCritChance.SettingChanged += (sender, args) => {
+				// When base changes, rebase ramp to new base for clarity
+				CritRamp.RebaseToBase();
+				_critChanceLogger.Set(CustomCritChance.Value);
+			};
 
 			CritDamageMultiplier = Config.Bind("Crit", "CritDamageMultiplier", 3f,
 				new ConfigDescription("Critical hit damage multiplier applied by the game.", new AcceptableValueRange<float>(0f, 10f)));
@@ -92,6 +99,9 @@ namespace BlackFlashCrit {
 			_critChanceLogger.Update();
 			_critMultiplierLogger.Update();
 			_overlayScaleLogger.Update();
+
+			// Maintain ramp reset on inactivity each frame
+			CritRamp.Update();
 		}
 
 		private void TryLoadSprites () {

@@ -22,6 +22,11 @@ namespace BlackFlashCrit {
 		static void Postfix (object __instance, object hitInstance) {
 			if (!BlackFlashCrit.ModEnabled.Value || __instance == null || hitInstance == null) return;
 
+			// Count player hits only when the victim is NOT the player
+			if (__instance is Component comp && !comp.gameObject.CompareTag("Player")) {
+				CritRamp.OnEnemyHit();
+			}
+
 			// Build compiled accessor once instead of using reflection every hit
 			EnsureCriticalHitAccessor(hitInstance);
 
@@ -77,12 +82,12 @@ namespace BlackFlashCrit {
 		}
 	}
 
-	// Return custom crit chance 
+	// Return effective crit chance (supports ramping)
 	[HarmonyPatch(typeof(Gameplay), "get_WandererCritChance")]
 	internal static class Gameplay_WandererCritChance_Patch {
 		static void Postfix (ref float __result) {
 			if (!BlackFlashCrit.ModEnabled.Value) return;
-			__result = Mathf.Clamp01(BlackFlashCrit.CustomCritChance.Value);
+			__result = Mathf.Clamp01(CritRamp.GetEffectiveCritChance());
 		}
 	}
 
