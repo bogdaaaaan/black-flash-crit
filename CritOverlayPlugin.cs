@@ -132,8 +132,11 @@ namespace BlackFlashCrit {
 		}
 
 		internal static void SpawnCritOverlay (Transform target) {
+			// Conditions to spawn overlay
 			if (!ModEnabled.Value || target == null) return;
+			if (!OverlaySettings.DisplayOverlay.Value) return;
 			if (SpritesArray == null || SpritesArray.Length == 0) return;
+
 			CritOverlayBurst.PlayBurst(target, SpritesArray);
 		}
 	}

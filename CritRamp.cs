@@ -73,6 +73,7 @@ namespace BlackFlashCrit {
 			}
 
 			s_CurrentCritChance = Mathf.Clamp01(s_CurrentCritChance * factor);
+			Log.Info($"Effective crit chance: {s_CurrentCritChance}");
 		}
 
 		// Call every frame from plugin.Update to handle inactivity reset.
@@ -88,7 +89,6 @@ namespace BlackFlashCrit {
 			if (!BlackFlashCrit.ModEnabled.Value) return baseChance;
 			if (!CritRampEnabled.Value) return baseChance;
 
-			Log.Info($"Effective crit chance: {s_CurrentCritChance} (base {baseChance})");
 			return Mathf.Clamp01(s_CurrentCritChance);
 		}
 

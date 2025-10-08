@@ -23,11 +23,6 @@ namespace BlackFlashCrit {
 		static void Postfix (object __instance, object hitInstance) {
 			if (!BlackFlashCrit.ModEnabled.Value || __instance == null || hitInstance == null) return;
 
-			// Count player hits only when the victim is NOT the player
-			if (__instance is Component comp && !comp.gameObject.CompareTag("Player")) {
-				CritRamp.OnEnemyHit();
-			}
-
 			// Build compiled accessor once instead of using reflection every hit
 			EnsureCriticalHitAccessor(hitInstance);
 
@@ -59,8 +54,8 @@ namespace BlackFlashCrit {
 			// Only spawn overlay on non-player targets
 			if (__instance is not Component c || c.gameObject.CompareTag("Player")) return;
 
-			if (OverlaySettings.DisplayOverlay.Value)
-				BlackFlashCrit.SpawnCritOverlay(c.transform);
+			CritRamp.OnEnemyHit();
+			BlackFlashCrit.SpawnCritOverlay(c.transform);
 		}
 
 		// Builds a compiled delegate: (object o) => ((HitInstance)o).CriticalHit
