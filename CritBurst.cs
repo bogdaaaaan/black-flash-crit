@@ -7,8 +7,9 @@ namespace BlackFlashCrit {
 		private static CritOverlayBurst runner;
 
 		// Simple object pool for overlay GameObjects to reduce GC
-		private static readonly Queue<GameObject> s_Pool = new Queue<GameObject>();
+		private static readonly Queue<OverlayPooledItem> s_Pool = new Queue<OverlayPooledItem>();
 		private const int PoolPrewarm = 0;
+		private const int PoolMax = 128;
 		private static Transform s_PoolRoot;
 
 		// Cache sorting layer lookup
@@ -22,6 +23,14 @@ namespace BlackFlashCrit {
 			if (anchor == null || sprites == null || sprites.Length == 0) return;
 
 			EnsureRunner();
+
+			// Ensure we have at least sprites.Length instances prepped
+			int need = Mathf.Max(0, sprites.Length - s_Pool.Count);
+			for (int i = 0; i < need; i++) {
+				var pooled = CreateOverlayGO();
+				ReleaseToPool(pooled);
+			}
+
 			runner.StartCoroutine(runner.BurstRoutine(anchor, sprites));
 		}
 
@@ -38,7 +47,7 @@ namespace BlackFlashCrit {
 			Object.DontDestroyOnLoad(poolRootGO);
 			s_PoolRoot = poolRootGO.transform;
 
-			// Optional prewarm
+			// Prewarm
 			for (int i = 0; i < PoolPrewarm; i++) {
 				var pooled = CreateOverlayGO();
 				ReleaseToPool(pooled);
@@ -49,10 +58,9 @@ namespace BlackFlashCrit {
 		private IEnumerator BurstRoutine (Transform anchor, Sprite[] sprites) {
 			int n = sprites.Length;
 
-			// Compute chance on the fly to avoid allocating a float[] per burst
 			// Delay between steps (in frames)
-			int minFrames = BlackFlashCrit.CritBurstMinFrames.Value;
-			int maxFrames = BlackFlashCrit.CritBurstMaxFrames.Value;
+			int minFrames = OverlaySettings.BurstMinFrames.Value;
+			int maxFrames = OverlaySettings.BurstMaxFrames.Value;
 
 			// Ensure values are valid: minFrames >= 0, maxFrames >= minFrames
 			if (minFrames < 0 || maxFrames < minFrames) {
@@ -101,26 +109,25 @@ namespace BlackFlashCrit {
 			float rotMax = 18f;
 			float scaleMin = 0.90f;
 			float scaleMax = 1.10f;
-			float scale = Random.Range(scaleMin, scaleMax) * BlackFlashCrit.CritOverlayScale.Value;
+			float scale = Random.Range(scaleMin, scaleMax) * OverlaySettings.OverlayScale.Value;
 
 			Vector2 jitter2D = posRadius > 0f ? Random.insideUnitCircle * posRadius : Vector2.zero;
 			float rotZ = (rotMax > 0f) ? Random.Range(-rotMax, rotMax) : 0f;
 
 			// Get from pool
-			var go = GetFromPool();
-			var tr = go.transform;
+			var item = GetFromPool();
+			var tr = item.transform;
 			tr.SetParent(null, false);
-			tr.position = anchor.position + new Vector3(jitter2D.x, jitter2D.y, 0f);
-			tr.rotation = Quaternion.Euler(0f, 0f, rotZ);
+			tr.SetPositionAndRotation(
+				anchor.position + new Vector3(jitter2D.x, jitter2D.y, 0f),
+				Quaternion.Euler(0f, 0f, rotZ)
+			);
 			tr.localScale = new Vector3(scale, scale, 1f);
 
-			// Get components (created once per pooled object)
-			var sr = go.GetComponent<SpriteRenderer>();
-			var fade = go.GetComponent<CritFade>();
+			var sr = item.SR;
+			var fade = item.Fade;
 
 			sr.sprite = sprite;
-
-			// Cache sorting layer lookup
 			EnsureEffectsLayerCached();
 			if (s_HasEffectsLayer) {
 				sr.sortingLayerName = EffectsLayerName;
@@ -130,44 +137,51 @@ namespace BlackFlashCrit {
 				sr.sortingOrder = 5000;
 			}
 
-			// Initial alpha per step: 0.7f, 0.49f, 0.343f, ...
 			float initialAlpha = Mathf.Pow(0.7f, stepIndex);
 			sr.color = new Color(1f, 1f, 1f, initialAlpha);
 
 			float fadeDuration = 0.4f;
-			// Return to pool instead of Destroy
-			fade.Init(fadeDuration, initialAlpha, ReleaseToPool);
-			go.SetActive(true);
+			// ReleaseToPool now expects OverlayPooledItem
+			fade.Init(fadeDuration, initialAlpha, go => ReleaseToPool(item));
+			item.gameObject.SetActive(true);
 		}
 
 		// Pooled instance creation
-		private static GameObject CreateOverlayGO () {
+		private static OverlayPooledItem CreateOverlayGO () {
 			var go = new GameObject("CritOverlaySprite");
 			go.SetActive(false);
 			go.transform.SetParent(s_PoolRoot, false);
 
-			// components are added only once and reused
+			// add once
 			var sr = go.AddComponent<SpriteRenderer>();
 			var fade = go.AddComponent<CritFade>();
+			var holder = go.AddComponent<OverlayPooledItem>();
+			holder.SR = sr;
+			holder.Fade = fade;
 
-			return go;
+			return holder;
 		}
 
 		// Get from pool or create
-		private static GameObject GetFromPool () {
-			if (s_Pool.Count > 0) {
-				var go = s_Pool.Dequeue();
-				return go;
-			}
+		private static OverlayPooledItem GetFromPool () {
+			if (s_Pool.Count > 0) return s_Pool.Dequeue();
 			return CreateOverlayGO();
 		}
 
 		// Release back to pool
-		private static void ReleaseToPool (GameObject go) {
-			if (go == null) return;
+		private static void ReleaseToPool (OverlayPooledItem item) {
+			if (item == null) return;
+			var go = item.gameObject;
 			go.SetActive(false);
 			go.transform.SetParent(s_PoolRoot, false);
-			s_Pool.Enqueue(go);
+
+			// Optional pool cap to avoid unbounded memory growth
+			if (s_Pool.Count < PoolMax) {
+				s_Pool.Enqueue(item);
+			}
+			else {
+				Object.Destroy(go);
+			}
 		}
 
 		// Cache whether "Effects" sorting layer exists
@@ -182,6 +196,16 @@ namespace BlackFlashCrit {
 				}
 			}
 			s_HasEffectsLayer = false;
+		}
+	}
+
+	internal class OverlayPooledItem : MonoBehaviour {
+		public SpriteRenderer SR;
+		public CritFade Fade;
+		private void Awake () {
+			// These are added at creation time; cache once
+			SR = GetComponent<SpriteRenderer>();
+			Fade = GetComponent<CritFade>();
 		}
 	}
 }

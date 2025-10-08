@@ -14,28 +14,12 @@ namespace BlackFlashCrit {
 	public class BlackFlashCrit : BaseUnityPlugin {
 		public const string PluginGuid = "bodyando.silksong.blackflash";
 		public const string PluginName = "Black Flash Mod";
-		public const string PluginVersion = "1.3.0";
+		public const string PluginVersion = "1.4.0";
 
 		internal static Sprite[] SpritesArray;
 
-		// Config Settings
-		// General
+		// Core on/off
 		internal static ConfigEntry<bool> ModEnabled;
-		internal static ConfigEntry<bool> EveryCrestCanCrit;
-		internal static ConfigEntry<bool> SkipCritChecks;
-		// Visual
-		internal static ConfigEntry<float> CritOverlayScale;
-		internal static ConfigEntry<bool> DisplayCritOverlay;
-		internal static ConfigEntry<int> CritBurstMinFrames;
-		internal static ConfigEntry<int> CritBurstMaxFrames;
-		// Crit (base values)
-		internal static ConfigEntry<float> CustomCritChance;
-		internal static ConfigEntry<float> CritDamageMultiplier;
-
-		// Debounced loggers
-		private Log.Debounced<float> _critChanceLogger;
-		private Log.Debounced<float> _critMultiplierLogger;
-		private Log.Debounced<float> _overlayScaleLogger;
 
 		private Harmony _harmony;
 
@@ -43,65 +27,28 @@ namespace BlackFlashCrit {
 			Log.LogSource = Logger;
 			_harmony = new Harmony(PluginGuid);
 
-			InitConfig();
-			// Initialize the ramping feature in its own module
+			InitCoreConfig();
+
+			// Initialize feature modules and their configs
+			CritSettings.Init(Config);
 			CritRamp.Init(Config);
+			OverlaySettings.Init(Config);
 
 			TryLoadSprites();
 			TryPatch();
 			Log.Info($"{PluginName} loaded.");
 		}
 
-		private void InitConfig () {
-			ModEnabled = Config.Bind("General", "EnableMod", true, "Enable or disable mod");
+		private void InitCoreConfig () {
+			ModEnabled = Config.Bind("General", "Enable Mod", true, "Enable or disable mod");
 			ModEnabled.SettingChanged += (sender, args) => Log.Info($"{PluginName} is now {(ModEnabled.Value ? "ON" : "OFF")}");
-
-			EveryCrestCanCrit = Config.Bind("General", "EveryCrestCanCrit", false, "If true, all crests can trigger critical hits. If false, only the Wanderer crit crest can.");
-			EveryCrestCanCrit.SettingChanged += (sender, args) => Log.Info($"EveryCrestCanCrit is now {(EveryCrestCanCrit.Value ? "ON" : "OFF")}");
-
-			SkipCritChecks = Config.Bind("General", "SkipCritChecks", false, "If true, skip checks for critical hits. If false, use vanilla game checks (Player should not be covered in maggots and have 9 or more silk).");
-			SkipCritChecks.SettingChanged += (sender, args) => Log.Info($"SkipCritChecks is now {(SkipCritChecks.Value ? "ON" : "OFF")}");
-
-			DisplayCritOverlay = Config.Bind("Visual", "DisplayCritOverlay", true, "If true, display custom sprites.");
-			DisplayCritOverlay.SettingChanged += (sender, args) => Log.Info($"DisplayCritOverlay is now {(DisplayCritOverlay.Value ? "ON" : "OFF")}");
-
-			CritOverlayScale = Config.Bind("Visual", "CritOverlayScale", 1f,
-				new ConfigDescription("Scale multiplier for the crit overlay images.", new AcceptableValueRange<float>(0.1f, 2f)));
-			_overlayScaleLogger = new Log.Debounced<float>(v => Log.Info($"CritOverlayScale is now {v}"), 0.15f);
-			CritOverlayScale.SettingChanged += (sender, args) => _overlayScaleLogger.Set(CritOverlayScale.Value);
-
-			CustomCritChance = Config.Bind("Crit", "CustomCritChance", 0.20f,
-				new ConfigDescription("Base critical chance (0.0 - 1.0).", new AcceptableValueRange<float>(0f, 1f)));
-			_critChanceLogger = new Log.Debounced<float>(v => Log.Info($"CustomCritChance (base) is now {v}"), 0.15f);
-			CustomCritChance.SettingChanged += (sender, args) => {
-				// When base changes, rebase ramp to new base for clarity
-				CritRamp.RebaseToBase();
-				_critChanceLogger.Set(CustomCritChance.Value);
-			};
-
-			CritDamageMultiplier = Config.Bind("Crit", "CritDamageMultiplier", 3f,
-				new ConfigDescription("Critical hit damage multiplier applied by the game.", new AcceptableValueRange<float>(0f, 10f)));
-			_critMultiplierLogger = new Log.Debounced<float>(v => Log.Info($"CritDamageMultiplier is now {v}"), 0.15f);
-			CritDamageMultiplier.SettingChanged += (sender, args) => _critMultiplierLogger.Set(CritDamageMultiplier.Value);
-
-			CritBurstMinFrames = Config.Bind("Hidden", "CritBurstMinFrames", 5,
-				new ConfigDescription("Minimum frames in between Black Flash burst frames (ADVANCED, hidden from UI).", null,
-					new BrowsableAttribute(false))
-			);
-
-			CritBurstMaxFrames = Config.Bind("Hidden", "CritBurstMaxFrames", 10,
-				new ConfigDescription("Maximum frames in between Black Flash burst frames (ADVANCED, hidden from UI).", null,
-					new BrowsableAttribute(false))
-			);
 		}
 
 		private void Update () {
-			_critChanceLogger.Update();
-			_critMultiplierLogger.Update();
-			_overlayScaleLogger.Update();
-
-			// Maintain ramp reset on inactivity each frame
+			// Modules that need per-frame maintenance
 			CritRamp.Update();
+			CritSettings.Update();
+			OverlaySettings.Update();
 		}
 
 		private void TryLoadSprites () {
@@ -152,7 +99,8 @@ namespace BlackFlashCrit {
 			try {
 				byte[] data = File.ReadAllBytes(path);
 				var tex = new Texture2D(2, 2, TextureFormat.RGBA32, false);
-				if (!tex.LoadImage(data)) {
+				// Discard CPU copy to lower managed memory footprint
+				if (!tex.LoadImage(data, markNonReadable: true)) {
 					Log.Error($"{label}: failed to decode image at {path}");
 					return null;
 				}

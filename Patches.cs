@@ -12,6 +12,7 @@ namespace BlackFlashCrit {
 		// Cache compiled accessor for HitInstance.CriticalHit to avoid per-call reflection
 		private static Func<object, bool> s_GetCriticalHit;
 		private static bool s_TriedBuildAccessor;
+		private static FieldInfo s_CritField;
 
 		static MethodBase TargetMethod () {
 			// Target the TakeDamage method in HealthManager that takes a HitInstance parameter
@@ -33,14 +34,19 @@ namespace BlackFlashCrit {
 			bool isCrit = false;
 			if (s_GetCriticalHit != null) {
 				// Fast delegate call
-				isCrit = s_GetCriticalHit(hitInstance); // Use compiled accessor
+				isCrit = s_GetCriticalHit(hitInstance);
 			}
 			else {
 				// Fallback path (should rarely/never happen after first success)
 				try {
-					var critField = hitInstance.GetType().GetField("CriticalHit", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-					if (critField != null) {
-						isCrit = (bool)critField.GetValue(hitInstance);
+					var field = s_CritField;
+					if (field == null) {
+						var t = hitInstance.GetType();
+						field = t.GetField("CriticalHit", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+						s_CritField = field;
+					}
+					if (field != null) {
+						isCrit = (bool)field.GetValue(hitInstance);
 					}
 				}
 				catch {
@@ -53,7 +59,7 @@ namespace BlackFlashCrit {
 			// Only spawn overlay on non-player targets
 			if (__instance is not Component c || c.gameObject.CompareTag("Player")) return;
 
-			if (BlackFlashCrit.DisplayCritOverlay.Value)
+			if (OverlaySettings.DisplayOverlay.Value)
 				BlackFlashCrit.SpawnCritOverlay(c.transform);
 		}
 
@@ -66,6 +72,8 @@ namespace BlackFlashCrit {
 				Type hitType = sampleHitInstance.GetType();
 				var field = hitType.GetField("CriticalHit", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
 				if (field == null || field.FieldType != typeof(bool)) return;
+
+				s_CritField = field;
 
 				// Build: (object obj) => ((HitType)obj).CriticalHit
 				var objParam = Expression.Parameter(typeof(object), "obj");
@@ -96,7 +104,7 @@ namespace BlackFlashCrit {
 	internal static class Gameplay_WandererCritMultiplier_Patch {
 		static void Postfix (ref float __result) {
 			if (!BlackFlashCrit.ModEnabled.Value) return;
-			__result = Mathf.Max(0f, BlackFlashCrit.CritDamageMultiplier.Value);
+			__result = Mathf.Max(0f, CritSettings.DamageMultiplier.Value);
 		}
 	}
 
@@ -107,13 +115,13 @@ namespace BlackFlashCrit {
 			if (!BlackFlashCrit.ModEnabled.Value) return;
 
 			// All crests can crit, skip checks
-			if (BlackFlashCrit.EveryCrestCanCrit.Value && BlackFlashCrit.SkipCritChecks.Value) {
+			if (CritSettings.EveryCrestCanCrit.Value && CritSettings.SkipCritChecks.Value) {
 				__result = true;
 				return;
 			}
 
 			// All crests can crit, do checks
-			if (BlackFlashCrit.EveryCrestCanCrit.Value && !BlackFlashCrit.SkipCritChecks.Value) {
+			if (CritSettings.EveryCrestCanCrit.Value && !CritSettings.SkipCritChecks.Value) {
 				HeroController hc = __instance as HeroController ?? HeroController.instance;
 				if (!hc) return;
 
@@ -129,7 +137,7 @@ namespace BlackFlashCrit {
 			}
 
 			// Only Wanderer Crest can crit and skip checks
-			if (!BlackFlashCrit.EveryCrestCanCrit.Value && BlackFlashCrit.SkipCritChecks.Value) {
+			if (!CritSettings.EveryCrestCanCrit.Value && CritSettings.SkipCritChecks.Value) {
 				if (!Gameplay.WandererCrest.IsEquipped) return;
 
 				__result = true;
