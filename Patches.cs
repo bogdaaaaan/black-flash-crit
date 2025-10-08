@@ -1,86 +1,45 @@
-﻿using BepInEx.Configuration;
-using GlobalSettings;
+﻿using GlobalSettings;
 using HarmonyLib;
-using System;
-using System.Reflection;
-using System.Linq.Expressions;
 using UnityEngine;
 
 namespace BlackFlashCrit {
-	[HarmonyPatch]
+	// Strong-typed patch: mutate HitInstance by ref before game consumes it
+	[HarmonyPatch(typeof(HealthManager))]
 	internal static class HealthManager_TakeDamage_Patch {
-		// Cache compiled accessor for HitInstance.CriticalHit to avoid per-call reflection
-		private static Func<object, bool> s_GetCriticalHit;
-		private static bool s_TriedBuildAccessor;
-		private static FieldInfo s_CritField;
 
-		static MethodBase TargetMethod () {
-			// Target the TakeDamage method in HealthManager that takes a HitInstance parameter
-			var hmType = AccessTools.TypeByName("HealthManager");
-			return AccessTools.Method(hmType, "TakeDamage", new Type[] { AccessTools.TypeByName("HitInstance") });
+		// Prefix to apply canon Black Flash (base^2.5) on crits
+		[HarmonyPatch("TakeDamage")]
+		[HarmonyPrefix]
+		private static void Prefix (ref HitInstance hitInstance) {
+			if (!BlackFlashCrit.ModEnabled.Value) return;
+			if (!CritSettings.CanonBlackFlashDamage.Value) return;
+			if (!hitInstance.CriticalHit) return;
+
+			int baseDamage = hitInstance.DamageDealt;
+			if (baseDamage <= 0) return;
+
+			// Canon: final = base^2.5
+			float powered = Mathf.Pow(baseDamage, 2.5f);
+			Log.Info($"Canon crit: base {baseDamage} -> powered {powered}");
+			hitInstance.DamageDealt = Mathf.Max(0, Mathf.RoundToInt(powered));
+
+			// Neutralize any further multiplier so the game won't rescale our powered damage
+			hitInstance.Multiplier = 1f;
 		}
 
-		static void Postfix (object __instance, object hitInstance) {
-			if (!BlackFlashCrit.ModEnabled.Value || __instance == null || hitInstance == null) return;
+		// Postfix for visuals and ramp
+		[HarmonyPatch("TakeDamage")]
+		[HarmonyPostfix]
+		private static void Postfix (HealthManager __instance, ref HitInstance hitInstance) {
+			if (!BlackFlashCrit.ModEnabled.Value) return;
+			if (!hitInstance.CriticalHit) return;
+			if (__instance == null) return;
 
-			// Build compiled accessor once instead of using reflection every hit
-			EnsureCriticalHitAccessor(hitInstance);
-
-			bool isCrit = false;
-			if (s_GetCriticalHit != null) {
-				// Fast delegate call
-				isCrit = s_GetCriticalHit(hitInstance);
-			}
-			else {
-				// Fallback path (should rarely/never happen after first success)
-				try {
-					var field = s_CritField;
-					if (field == null) {
-						var t = hitInstance.GetType();
-						field = t.GetField("CriticalHit", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-						s_CritField = field;
-					}
-					if (field != null) {
-						isCrit = (bool)field.GetValue(hitInstance);
-					}
-				}
-				catch {
-					return;
-				}
-			}
-
-			if (!isCrit) return;
-
-			// Only spawn overlay on non-player targets
-			if (__instance is not Component c || c.gameObject.CompareTag("Player")) return;
-
-			CritRamp.OnEnemyHit();
-			BlackFlashCrit.SpawnCritOverlay(c.transform);
-		}
-
-		// Builds a compiled delegate: (object o) => ((HitInstance)o).CriticalHit
-		private static void EnsureCriticalHitAccessor (object sampleHitInstance) {
-			if (s_TriedBuildAccessor) return;
-			s_TriedBuildAccessor = true;
-
-			try {
-				Type hitType = sampleHitInstance.GetType();
-				var field = hitType.GetField("CriticalHit", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-				if (field == null || field.FieldType != typeof(bool)) return;
-
-				s_CritField = field;
-
-				// Build: (object obj) => ((HitType)obj).CriticalHit
-				var objParam = Expression.Parameter(typeof(object), "obj");
-				var casted = Expression.Convert(objParam, hitType);
-				var fieldExpr = Expression.Field(casted, field);
-				var body = Expression.Convert(fieldExpr, typeof(bool));
-				var lambda = Expression.Lambda<Func<object, bool>>(body, objParam);
-
-				s_GetCriticalHit = lambda.Compile();
-			}
-			catch {
-				// ignore; fallback path will be used
+			// Only show overlay and ramp when the victim is NOT the player
+			var victim = __instance as Component;
+			if (victim != null && !victim.gameObject.CompareTag("Player")) {
+				CritRamp.OnEnemyHit();
+				BlackFlashCrit.SpawnCritOverlay(victim.transform);
 			}
 		}
 	}
@@ -88,17 +47,23 @@ namespace BlackFlashCrit {
 	// Return effective crit chance (supports ramping)
 	[HarmonyPatch(typeof(Gameplay), "get_WandererCritChance")]
 	internal static class Gameplay_WandererCritChance_Patch {
-		static void Postfix (ref float __result) {
+		private static void Postfix (ref float __result) {
 			if (!BlackFlashCrit.ModEnabled.Value) return;
 			__result = Mathf.Clamp01(CritRamp.GetEffectiveCritChance());
 		}
 	}
 
-	// Return custom crit damage multiplier 
+	// Crit multiplier
 	[HarmonyPatch(typeof(Gameplay), "get_WandererCritMultiplier")]
 	internal static class Gameplay_WandererCritMultiplier_Patch {
-		static void Postfix (ref float __result) {
+		private static void Postfix (ref float __result) {
 			if (!BlackFlashCrit.ModEnabled.Value) return;
+
+			if (CritSettings.CanonBlackFlashDamage.Value) {
+				__result = 1f;
+				return;
+			}
+
 			__result = Mathf.Max(0f, CritSettings.DamageMultiplier.Value);
 		}
 	}
@@ -106,7 +71,7 @@ namespace BlackFlashCrit {
 	// Modify whether the player can crit based on config
 	[HarmonyPatch(typeof(HeroController), "get_IsWandererLucky")]
 	internal static class HeroController_IsWandererLucky_Patch {
-		static void Postfix (object __instance, ref bool __result) {
+		private static void Postfix (object __instance, ref bool __result) {
 			if (!BlackFlashCrit.ModEnabled.Value) return;
 
 			// All crests can crit, skip checks
@@ -138,8 +103,7 @@ namespace BlackFlashCrit {
 				__result = true;
 				return;
 			}
-
-			// Only Wanderer Crest can crit and do checks = vanilla behavior
+			// Else: vanilla behavior
 		}
 	}
 }

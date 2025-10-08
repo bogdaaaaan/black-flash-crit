@@ -1,5 +1,4 @@
 ﻿using BepInEx.Configuration;
-using UnityEngine;
 
 namespace BlackFlashCrit {
 	// Owns crit rules and base crit values (used by patches and CritRamp).
@@ -8,6 +7,8 @@ namespace BlackFlashCrit {
 		internal static ConfigEntry<bool> SkipCritChecks;
 		internal static ConfigEntry<float> BaseCritChance;
 		internal static ConfigEntry<float> DamageMultiplier;
+
+		internal static ConfigEntry<bool> CanonBlackFlashDamage;
 
 		// Debounced logs (to keep plugin lean)
 		private static Log.Debounced<float> _baseChanceLogger;
@@ -37,6 +38,11 @@ namespace BlackFlashCrit {
 				new ConfigDescription("Critical hit damage multiplier applied by the game.", new AcceptableValueRange<float>(0f, 10f)));
 			_multiplierLogger = new Log.Debounced<float>(v => Log.Info($"CritDamageMultiplier is now {v}"), 0.15f);
 			DamageMultiplier.SettingChanged += (s, a) => _multiplierLogger.Set(DamageMultiplier.Value);
+
+			CanonBlackFlashDamage = config.Bind("Crit", "Canon Black Flash Damage", false,
+				"If true, crit damage is computed as baseDamage^2.5 (Crit Damage Multiplier is ignored).");
+			CanonBlackFlashDamage.SettingChanged += (s, a) =>
+				Log.Info($"CanonBlackFlashDamage is now {(CanonBlackFlashDamage.Value ? "ON" : "OFF")}.");
 		}
 
 		internal static void Update () {

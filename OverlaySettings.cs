@@ -1,6 +1,5 @@
 ﻿using BepInEx.Configuration;
 using System.ComponentModel;
-using UnityEngine;
 
 namespace BlackFlashCrit {
 	// Owns overlay visuals and burst timing.
