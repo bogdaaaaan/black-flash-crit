@@ -13,7 +13,7 @@ namespace BlackFlashCrit {
 	public class BlackFlashCrit : BaseUnityPlugin {
 		public const string PluginGuid = "bodyando.silksong.blackflash";
 		public const string PluginName = "Black Flash Mod";
-		public const string PluginVersion = "1.4.0";
+		public const string PluginVersion = "1.5.0";
 
 		internal static Sprite[] SpritesArray;
 
@@ -48,7 +48,7 @@ namespace BlackFlashCrit {
 		}
 
 		private void InitCoreConfig () {
-			ModEnabled = Config.Bind("General", "Enable Mod", true, "Enable or disable mod");
+			ModEnabled = Config.Bind(SectionsOrder.S_General, "Enable Mod", true, "Enable or disable mod");
 			ModEnabled.SettingChanged += (sender, args) => Log.Info($"{PluginName} is now {(ModEnabled.Value ? "ON" : "OFF")}");
 		}
 
