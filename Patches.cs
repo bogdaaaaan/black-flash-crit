@@ -3,31 +3,28 @@ using HarmonyLib;
 using UnityEngine;
 
 namespace BlackFlashCrit {
-	// Strong-typed patch: mutate HitInstance by ref before game consumes it
 	[HarmonyPatch(typeof(HealthManager))]
 	internal static class HealthManager_TakeDamage_Patch {
-
-		// Prefix to apply canon Black Flash (base^2.5) on crits
+		// start suppression window and optionally apply canon damage
 		[HarmonyPatch("TakeDamage")]
 		[HarmonyPrefix]
 		private static void Prefix (ref HitInstance hitInstance) {
 			if (!BlackFlashCrit.ModEnabled.Value) return;
-			if (!CritSettings.CanonBlackFlashDamage.Value) return;
 			if (!hitInstance.CriticalHit) return;
+
+			// Canon damage (base^2.5) if enabled
+			if (!CritSettings.CanonBlackFlashDamage.Value) return;
 
 			int baseDamage = hitInstance.DamageDealt;
 			if (baseDamage <= 0) return;
 
-			// Canon: final = base^2.5
 			float powered = Mathf.Pow(baseDamage, 2.5f);
 			Log.Info($"Canon crit: base {baseDamage} -> powered {powered}");
 			hitInstance.DamageDealt = Mathf.Max(0, Mathf.RoundToInt(powered));
-
-			// Neutralize any further multiplier so the game won't rescale our powered damage
 			hitInstance.Multiplier = 1f;
 		}
 
-		// Postfix for visuals and ramp
+		// visuals, ramp, custom audio
 		[HarmonyPatch("TakeDamage")]
 		[HarmonyPostfix]
 		private static void Postfix (HealthManager __instance, ref HitInstance hitInstance) {
@@ -35,11 +32,12 @@ namespace BlackFlashCrit {
 			if (!hitInstance.CriticalHit) return;
 			if (__instance == null) return;
 
-			// Only show overlay and ramp when the victim is NOT the player
 			var victim = __instance as Component;
 			if (victim != null && !victim.gameObject.CompareTag("Player")) {
 				CritRamp.OnEnemyHit();
 				BlackFlashCrit.SpawnCritOverlay(victim.transform);
+				SilkOnCrit.GrantOnCrit();
+				CritAudio.PlayRandomCritSFX(victim.transform.position);
 			}
 		}
 	}
@@ -99,7 +97,6 @@ namespace BlackFlashCrit {
 			// Only Wanderer Crest can crit and skip checks
 			if (!CritSettings.EveryCrestCanCrit.Value && CritSettings.SkipCritChecks.Value) {
 				if (!Gameplay.WandererCrest.IsEquipped) return;
-
 				__result = true;
 				return;
 			}

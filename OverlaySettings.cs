@@ -23,12 +23,10 @@ namespace BlackFlashCrit {
 			OverlayScale.SettingChanged += (s, a) => _scaleLogger.Set(OverlayScale.Value);
 
 			BurstMinFrames = config.Bind("Hidden", "CritBurstMinFrames", 5,
-				new ConfigDescription("Minimum frames between Black Flash burst frames (ADVANCED, hidden from UI).", null,
-					new BrowsableAttribute(false)));
+				new ConfigDescription("Minimum frames between Black Flash burst frames (ADVANCED, hidden from UI).", null, new BrowsableAttribute(false)));
 
 			BurstMaxFrames = config.Bind("Hidden", "CritBurstMaxFrames", 10,
-				new ConfigDescription("Maximum frames between Black Flash burst frames (ADVANCED, hidden from UI).", null,
-					new BrowsableAttribute(false)));
+				new ConfigDescription("Maximum frames between Black Flash burst frames (ADVANCED, hidden from UI).", null, new BrowsableAttribute(false)));
 		}
 
 		internal static void Update () {

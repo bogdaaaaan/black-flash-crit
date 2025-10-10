@@ -17,6 +17,8 @@ namespace BlackFlashCrit {
 
 		internal static Sprite[] SpritesArray;
 
+		private const string ImagesFolderName = "images";
+
 		// Core on/off
 		internal static ConfigEntry<bool> ModEnabled;
 
@@ -32,6 +34,11 @@ namespace BlackFlashCrit {
 			CritSettings.Init(Config);
 			CritRamp.Init(Config);
 			OverlaySettings.Init(Config);
+			SilkOnCrit.Init(Config);
+
+			// Initialize audio
+			string pluginDir = Path.GetDirectoryName(Info.Location);
+			CritAudio.Init(Config, pluginDir);
 
 			TryLoadSprites();
 			TryPatch();
@@ -48,12 +55,14 @@ namespace BlackFlashCrit {
 			CritRamp.Update();
 			CritSettings.Update();
 			OverlaySettings.Update();
+			CritAudio.Update();
+			SilkOnCrit.Update();
 		}
 
 		private void TryLoadSprites () {
 			try {
 				string pluginDir = Path.GetDirectoryName(Info.Location);
-				string imagesDir = Path.Combine(pluginDir, "images");
+				string imagesDir = Path.Combine(pluginDir, ImagesFolderName);
 
 				if (!Directory.Exists(imagesDir)) {
 					Log.Warn($"Images directory not found at {imagesDir}. No overlay images loaded.");
