@@ -8,21 +8,6 @@ using UnityEngine.Networking;
 
 namespace BlackFlashCrit {
 	internal static class CritAudio {
-		// Config
-		internal static ConfigEntry<bool> EnableCritSounds;
-		internal static ConfigEntry<float> CritSoundVolume;
-		internal static ConfigEntry<float> CritSoundPitchMin;
-		internal static ConfigEntry<float> CritSoundPitchMax;
-
-		// Hidden config
-		internal static ConfigEntry<int> MaxVoices;
-
-		// Debounced logs
-		private static Log.Debounced<float> _critSoundVolumeLogger;
-		private static Log.Debounced<float> _critSoundPitchMinLogger;
-		private static Log.Debounced<float> _critSoundPitchMaxLogger;
-
-		// State
 		private static readonly List<AudioClip> s_Clips = new List<AudioClip>();
 		private static readonly List<AudioSource> s_Sources = new List<AudioSource>();
 		private static int s_NextVoice;
@@ -34,24 +19,6 @@ namespace BlackFlashCrit {
 		private const string AudioFolderName = "sounds";
 
 		internal static void Init (ConfigFile config, string pluginDir) {
-			EnableCritSounds = config.Bind("Audio", "Enable Crit Sounds", true, "Play a random custom sound when landing a critical hit.");
-			EnableCritSounds.SettingChanged += (s, a) => Log.Info($"Enable Crit Sounds is now {(EnableCritSounds.Value ? "ON" : "OFF")}");
-
-			CritSoundVolume = config.Bind("Audio", "Crit Sound Volume", 0.9f, new ConfigDescription("Volume (0.0 - 1.0) applied to crit sounds.", new AcceptableValueRange<float>(0f, 1f)));
-			_critSoundVolumeLogger = new Log.Debounced<float>(v => Log.Info($"Crit Sound Volume is now {v}"), 0.15f);
-			CritSoundVolume.SettingChanged += (s, a) => _critSoundVolumeLogger.Set(CritSoundVolume.Value);
-
-			CritSoundPitchMin = config.Bind("Audio", "Crit Sound Pitch Min", 1.0f, new ConfigDescription("Minimum random pitch per crit.", new AcceptableValueRange<float>(0.5f, 3f)));
-			_critSoundPitchMinLogger = new Log.Debounced<float>(v => Log.Info($"Crit Sound Pitch Min is now {v}"), 0.15f);
-			CritSoundPitchMin.SettingChanged += (s, a) => _critSoundPitchMinLogger.Set(CritSoundPitchMin.Value);
-
-			CritSoundPitchMax = config.Bind("Audio", "Crit Sound Pitch Max", 1.0f, new ConfigDescription("Maximum random pitch per crit.", new AcceptableValueRange<float>(0.5f, 3f)));
-			_critSoundPitchMaxLogger = new Log.Debounced<float>(v => Log.Info($"Crit Sound Pitch Max is now {v}"), 0.15f);
-			CritSoundPitchMax.SettingChanged += (s, a) => _critSoundPitchMaxLogger.Set(CritSoundPitchMax.Value);
-
-			MaxVoices = config.Bind("Hidden", "Max Simultaneous Voices", 4, new ConfigDescription("Number of overlapping crit sounds allowed.", new AcceptableValueRange<int>(1, 16), new BrowsableAttribute(false)));
-			MaxVoices.SettingChanged += (s, a) => BuildAudioPool();
-
 			EnsureRootAndRunner();
 			BuildAudioPool();
 
@@ -65,11 +32,6 @@ namespace BlackFlashCrit {
 			UnityEngine.Object.DontDestroyOnLoad(s_AudioRoot);
 			s_Runner = s_AudioRoot.AddComponent<CritAudioRunner>();
 		}
-		internal static void Update () {
-			_critSoundVolumeLogger?.Update();
-			_critSoundPitchMinLogger?.Update();
-			_critSoundPitchMaxLogger?.Update();
-		}
 
 		private static void BuildAudioPool () {
 			// Clear existing
@@ -79,7 +41,7 @@ namespace BlackFlashCrit {
 			s_Sources.Clear();
 			s_NextVoice = 0;
 
-			int count = Mathf.Clamp(MaxVoices.Value, 1, 16);
+			int count = Mathf.Clamp(AudioSetting.MaxVoices.Value, 1, 16);
 			for (int i = 0; i < count; i++) {
 				var go = new GameObject($"BlackFlashCrit_Audio_{i}");
 				go.transform.SetParent(s_AudioRoot.transform, false);
@@ -148,7 +110,7 @@ namespace BlackFlashCrit {
 
 		internal static void PlayRandomCritSFX (Vector3 worldPos) {
 			if (!BlackFlashCrit.ModEnabled.Value) return;
-			if (!EnableCritSounds.Value) return;
+			if (!AudioSetting.EnableCritSounds.Value) return;
 			if (s_Clips.Count == 0) return;
 			if (s_Sources.Count == 0) return;
 
@@ -168,9 +130,9 @@ namespace BlackFlashCrit {
 			if (clip == null) return;
 
 			// Configure and play
-			float vol = Mathf.Clamp01(CritSoundVolume.Value);
-			float pMin = Mathf.Min(CritSoundPitchMin.Value, CritSoundPitchMax.Value);
-			float pMax = Mathf.Max(CritSoundPitchMin.Value, CritSoundPitchMax.Value);
+			float vol = Mathf.Clamp01(AudioSetting.CritSoundVolume.Value);
+			float pMin = Mathf.Min(AudioSetting.CritSoundPitchMin.Value, AudioSetting.CritSoundPitchMax.Value);
+			float pMax = Mathf.Max(AudioSetting.CritSoundPitchMin.Value, AudioSetting.CritSoundPitchMax.Value);
 			src.pitch = UnityEngine.Random.Range(pMin, pMax);
 
 			// 2D audio ignores position, left to support 3D in future

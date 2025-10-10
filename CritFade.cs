@@ -9,7 +9,7 @@ namespace BlackFlashCrit {
 		private SpriteRenderer sr;
 
 		// Callback to return object to pool instead of Destroy
-		private Action<GameObject> _onFinished; 
+		private Action<GameObject> _onFinished;
 
 		// onFinished callback
 		public void Init (float duration, float initialAlpha = 1f, Action<GameObject> onFinished = null) {

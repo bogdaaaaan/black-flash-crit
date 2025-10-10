@@ -32,9 +32,11 @@ namespace BlackFlashCrit {
 
 			// Initialize feature modules and their configs
 			CritSettings.Init(Config);
-			CritRamp.Init(Config);
+			RampingSettings.Init(Config);
 			OverlaySettings.Init(Config);
-			SilkOnCrit.Init(Config);
+			AudioSetting.Init(Config);
+
+			CritRamp.Init();
 
 			// Initialize audio
 			string pluginDir = Path.GetDirectoryName(Info.Location);
@@ -53,10 +55,11 @@ namespace BlackFlashCrit {
 		private void Update () {
 			// Modules that need per-frame maintenance
 			CritRamp.Update();
+
+			RampingSettings.Update();
 			CritSettings.Update();
 			OverlaySettings.Update();
-			CritAudio.Update();
-			SilkOnCrit.Update();
+			AudioSetting.Update();
 		}
 
 		private void TryLoadSprites () {

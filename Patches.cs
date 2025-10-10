@@ -1,6 +1,7 @@
 ﻿using GlobalSettings;
 using HarmonyLib;
 using UnityEngine;
+using System;
 
 namespace BlackFlashCrit {
 	[HarmonyPatch(typeof(HealthManager))]
@@ -101,6 +102,41 @@ namespace BlackFlashCrit {
 				return;
 			}
 			// Else: vanilla behavior
+		}
+	}
+
+	[HarmonyPatch(typeof(ObjectPool))]
+	internal static class CritEffectAudioMute {
+		[HarmonyPatch(nameof(ObjectPool.Spawn), new Type[] { typeof(GameObject), typeof(Transform), typeof(Vector3), typeof(Quaternion) })]
+		[HarmonyPostfix]
+		private static void Postfix (GameObject prefab, Transform parent, Vector3 position, Quaternion rotation, ref GameObject __result) {
+			if (__result == null) return;
+
+			var critPrefab = Gameplay.WandererCritEffect;
+			if (!critPrefab || prefab != critPrefab) return;
+
+			foreach (var src in __result.GetComponentsInChildren<AudioSource>(true)) {
+				if (AudioSetting.MuteDefaultCritSfx.Value) {
+					// Ensure nothing plays (even if OnEnable already fired)
+					if (src.isPlaying) src.Stop();
+					src.playOnAwake = false;
+					src.mute = true;
+					src.volume = 0f;
+				}
+				else {
+					// Restore to a sane audible state (handles pooled instances previously muted)
+					bool wasMutedOrDisabled = src.mute || src.volume <= 0.0001f || !src.playOnAwake;
+
+					src.mute = false;
+					if (src.volume <= 0.0001f) src.volume = 1f;
+					src.playOnAwake = true;
+
+					// If it was previously muted/disabled, play now so this spawn has audio
+					if (wasMutedOrDisabled && src.clip) {
+						try { src.Play(); } catch { /* ignore */ }
+					}
+				}
+			}
 		}
 	}
 }
