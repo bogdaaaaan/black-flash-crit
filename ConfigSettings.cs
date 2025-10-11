@@ -5,20 +5,19 @@ namespace BlackFlashCrit {
 	internal static class  SectionsOrder {
 		internal const string S_General = "0_General";
 		internal const string S_Crit = "1_Crit";
-		internal const string S_Ramp = "2_Crit_Ramp";
+		internal const string S_BuildUp = "2_Crit_Build_up";
 		internal const string S_Visual = "3_Visual";
 		internal const string S_Audio = "4_Audio";
 		internal const string S_Hidden = "9_Hidden";
 	}
 
-	// Owns crit rules and base crit values (used by patches and CritRamp).
+	// Owns crit rules and base crit values (used by patches and CritBuildUp).
 	internal static class CritSettings {
 		// Crit config
 		internal static ConfigEntry<bool> EveryCrestCanCrit;
 		internal static ConfigEntry<bool> SkipCritChecks;
 		internal static ConfigEntry<float> BaseCritChance;
 		internal static ConfigEntry<float> DamageMultiplier;
-		
 		internal static ConfigEntry<bool> CanonBlackFlashDamage;
 
 		// Silk on crit config
@@ -46,7 +45,7 @@ namespace BlackFlashCrit {
 				new ConfigDescription("Base critical chance (0.0 - 1.0)", new AcceptableValueRange<float>(0f, 1f)));
 			_baseChanceLogger = new Log.Debounced<float>(v => Log.Info($"CustomCritChance (base) is now {v}"), 0.15f);
 			BaseCritChance.SettingChanged += (s, a) => {
-				CritRamp.RebaseToBase();
+				CritBuildUp.RebaseToBase();
 				_baseChanceLogger.Set(BaseCritChance.Value);
 			};
 
@@ -76,52 +75,52 @@ namespace BlackFlashCrit {
 		}
 	}
 
-	// Owns crit ramping settings and state.
-	internal static class RampingSettings {
-		// Crit ramp config 
-		internal static ConfigEntry<bool> CritRampEnabled;
-		internal static ConfigEntry<bool> CritRampIncrease;
-		internal static ConfigEntry<float> CritRampPercentPerHit;
-		internal static ConfigEntry<float> CritRampResetSeconds;
+	// Owns crit build up settings and state.
+	internal static class CritBuildUpSettings {
+		// Crit build up config 
+		internal static ConfigEntry<bool> CritBuildUpEnabled;
+		internal static ConfigEntry<bool> CritBuildUpIncrease;
+		internal static ConfigEntry<float> CritBuildUpPercentPerHit;
+		internal static ConfigEntry<float> CritBuildUpResetSeconds;
 
 		//Debounce logs
-		private static Log.Debounced<float> _critRampPercentPerHitLogger;
-		private static Log.Debounced<float> _critRampResetSecondsLogger;
+		private static Log.Debounced<float> _critBuildUpPercentPerHitLogger;
+		private static Log.Debounced<float> _critBuildUpResetSecondsLogger;
 
 		internal static void Init (ConfigFile config) {
-			// Crit ramp config
-			CritRampEnabled = config.Bind(SectionsOrder.S_Ramp, "Enabled", false,
-							"Enable per-hit crit chance ramping (multiplies after each hit, resets after inactivity).");
+			// Crit build up config
+			CritBuildUpEnabled = config.Bind(SectionsOrder.S_BuildUp, "Crit Build Up Enabled", false,
+							"Enable per-hit crit chance build up (multiplies after each hit, resets after inactivity).");
 
-			CritRampIncrease = config.Bind(SectionsOrder.S_Ramp, "Increase", true,
+			CritBuildUpIncrease = config.Bind(SectionsOrder.S_BuildUp, "Build Up Increase", true,
 				"If true, chance increases per hit. If false, chance decreases per hit.");
 
-			CritRampPercentPerHit = config.Bind(SectionsOrder.S_Ramp, "Percent Per Hit", 0.10f,
+			CritBuildUpPercentPerHit = config.Bind(SectionsOrder.S_BuildUp, "Percent Per Hit", 0.10f,
 				new ConfigDescription("Percent change per hit (0.0 - 1.0). Example: 0.10 = ±10% per hit.", new AcceptableValueRange<float>(0f, 1f)));
-			_critRampPercentPerHitLogger = new Log.Debounced<float>(v => Log.Info($"PercentPerHit is now {v}"), 0.15f);
+			_critBuildUpPercentPerHitLogger = new Log.Debounced<float>(v => Log.Info($"PercentPerHit is now {v}"), 0.15f);
 
-			CritRampResetSeconds = config.Bind(SectionsOrder.S_Ramp, "Reset Seconds", 7f,
+			CritBuildUpResetSeconds = config.Bind(SectionsOrder.S_BuildUp, "Reset Seconds", 7f,
 				new ConfigDescription("Seconds of inactivity after which crit chance resets to base.", new AcceptableValueRange<float>(0f, 60f)));
-			_critRampResetSecondsLogger = new Log.Debounced<float>(v => Log.Info($"ResetSeconds is now {v}"), 0.15f);
+			_critBuildUpResetSecondsLogger = new Log.Debounced<float>(v => Log.Info($"ResetSeconds is now {v}"), 0.15f);
 
-			CritRampEnabled.SettingChanged += (s, a) => {
-				CritRamp.RebaseToBase();
-				Log.Info($"CritRamp Enabled is now {(CritRampEnabled.Value ? "ON" : "OFF")}.");
+			CritBuildUpEnabled.SettingChanged += (s, a) => {
+				CritBuildUp.RebaseToBase();
+				Log.Info($"CritBuildUpEnabled is now {(CritBuildUpEnabled.Value ? "ON" : "OFF")}.");
 			};
-			CritRampIncrease.SettingChanged += (s, a) => {
-				Log.Info($"CritRamp mode: {(CritRampIncrease.Value ? "INCREASE" : "DECREASE")} per hit.");
+			CritBuildUpIncrease.SettingChanged += (s, a) => {
+				Log.Info($"CritBuildUp mode: {(CritBuildUpIncrease.Value ? "INCREASE" : "DECREASE")} per hit.");
 			};
-			CritRampPercentPerHit.SettingChanged += (s, a) => {
-				_critRampPercentPerHitLogger.Set(CritRampPercentPerHit.Value);
+			CritBuildUpPercentPerHit.SettingChanged += (s, a) => {
+				_critBuildUpPercentPerHitLogger.Set(CritBuildUpPercentPerHit.Value);
 			};
-			CritRampResetSeconds.SettingChanged += (s, a) => {
-				_critRampResetSecondsLogger.Set(CritRampResetSeconds.Value);
+			CritBuildUpResetSeconds.SettingChanged += (s, a) => {
+				_critBuildUpResetSecondsLogger.Set(CritBuildUpResetSeconds.Value);
 			};
 		}
 
 		internal static void Update () {
-			_critRampPercentPerHitLogger.Update();
-			_critRampResetSecondsLogger.Update();
+			_critBuildUpPercentPerHitLogger.Update();
+			_critBuildUpResetSecondsLogger.Update();
 		}
 	}
 
@@ -129,9 +128,12 @@ namespace BlackFlashCrit {
 	internal static class OverlaySettings {
 		internal static ConfigEntry<bool> DisplayOverlay;
 		internal static ConfigEntry<float> OverlayScale;
+
+		// Hidden config
 		internal static ConfigEntry<int> BurstMinFrames;
 		internal static ConfigEntry<int> BurstMaxFrames;
 
+		// Debounced logs
 		private static Log.Debounced<float> _scaleLogger;
 
 		internal static void Init (ConfigFile config) {
@@ -164,7 +166,6 @@ namespace BlackFlashCrit {
 		internal static ConfigEntry<float> CritSoundVolume;
 		internal static ConfigEntry<float> CritSoundPitchMin;
 		internal static ConfigEntry<float> CritSoundPitchMax;
-
 		internal static ConfigEntry<bool> MuteDefaultCritSfx;
 
 		// Hidden config

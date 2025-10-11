@@ -25,7 +25,7 @@ namespace BlackFlashCrit {
 			hitInstance.Multiplier = 1f;
 		}
 
-		// visuals, ramp, custom audio
+		// visuals, build up, custom audio
 		[HarmonyPatch("TakeDamage")]
 		[HarmonyPostfix]
 		private static void Postfix (HealthManager __instance, ref HitInstance hitInstance) {
@@ -35,7 +35,7 @@ namespace BlackFlashCrit {
 
 			var victim = __instance as Component;
 			if (victim != null && !victim.gameObject.CompareTag("Player")) {
-				CritRamp.OnEnemyHit();
+				CritBuildUp.OnEnemyHit();
 				BlackFlashCrit.SpawnCritOverlay(victim.transform);
 				SilkOnCrit.GrantOnCrit();
 				CritAudio.PlayRandomCritSFX(victim.transform.position);
@@ -43,12 +43,12 @@ namespace BlackFlashCrit {
 		}
 	}
 
-	// Return effective crit chance (supports ramping)
+	// Return effective crit chance (supports crit build up)
 	[HarmonyPatch(typeof(Gameplay), "get_WandererCritChance")]
 	internal static class Gameplay_WandererCritChance_Patch {
 		private static void Postfix (ref float __result) {
 			if (!BlackFlashCrit.ModEnabled.Value) return;
-			__result = Mathf.Clamp01(CritRamp.GetEffectiveCritChance());
+			__result = Mathf.Clamp01(CritBuildUp.GetEffectiveCritChance());
 		}
 	}
 

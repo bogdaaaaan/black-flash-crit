@@ -2,8 +2,8 @@
 using UnityEngine;
 
 namespace BlackFlashCrit {
-	// Manages per-hit ramping of crit chance and inactivity reset.
-	internal static class CritRamp {
+	// Manages per-hit Build Up of crit chance and inactivity reset.
+	internal static class CritBuildUp {
 
 		// State
 		private static float s_CurrentCritChance;
@@ -21,14 +21,14 @@ namespace BlackFlashCrit {
 			s_LastHitRealtime = Time.realtimeSinceStartup;
 
 			// If disabled, keep current equal to base.
-			if (!RampingSettings.CritRampEnabled.Value) {
+			if (!CritBuildUpSettings.CritBuildUpEnabled.Value) {
 				RebaseToBase();
 				return;
 			}
 
 			// Multiplicative step: current *= (1 ± step)
-			float step = Mathf.Clamp01(RampingSettings.CritRampPercentPerHit.Value);
-			float factor = RampingSettings.CritRampIncrease.Value ? (1f + step) : (1f - step);
+			float step = Mathf.Clamp01(CritBuildUpSettings.CritBuildUpPercentPerHit.Value);
+			float factor = CritBuildUpSettings.CritBuildUpIncrease.Value ? (1f + step) : (1f - step);
 
 			// If current somehow hit zero while base > 0, rebase to base before stepping.
 			if (s_CurrentCritChance <= 0f && CritSettings.BaseCritChance.Value > 0f) {
@@ -48,7 +48,7 @@ namespace BlackFlashCrit {
 		internal static float GetEffectiveCritChance () {
 			float baseChance = Mathf.Clamp01(CritSettings.BaseCritChance.Value);
 			if (!BlackFlashCrit.ModEnabled.Value) return baseChance;
-			if (!RampingSettings.CritRampEnabled.Value) return baseChance;
+			if (!CritBuildUpSettings.CritBuildUpEnabled.Value) return baseChance;
 
 			return Mathf.Clamp01(s_CurrentCritChance);
 		}
@@ -59,13 +59,13 @@ namespace BlackFlashCrit {
 		}
 
 		private static void ResetIfStale () {
-			if (!RampingSettings.CritRampEnabled.Value) {
+			if (!CritBuildUpSettings.CritBuildUpEnabled.Value) {
 				// When disabled, keep current pinned to base.
 				RebaseToBase();
 				return;
 			}
 
-			float window = Mathf.Max(0f, RampingSettings.CritRampResetSeconds.Value);
+			float window = Mathf.Max(0f, CritBuildUpSettings.CritBuildUpResetSeconds.Value);
 			if (window <= 0f) return; // disabled auto-reset
 
 			float now = Time.realtimeSinceStartup;
